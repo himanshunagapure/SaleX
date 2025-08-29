@@ -8,11 +8,12 @@ import os
 import time
 
 # Add the current directory to the Python path
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+#sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-import config
-import google_service
-import database_service
+from web_url_scraper.config import validate_config 
+from web_url_scraper.google_service import search_multiple_pages, filter_valid_urls, detect_url_type
+from web_url_scraper.database_service import test_database_connection, setup_database_indexes, save_multiple_urls, get_urls_by_query, get_database_stats
+
 
 def test_complete_flow():
     """
@@ -23,14 +24,14 @@ def test_complete_flow():
     
     # Test configuration
     print("1. Testing Configuration...")
-    if not config.validate_config():
+    if not validate_config():
         print("❌ Configuration validation failed!")
         return False
     print("✅ Configuration validation passed!")
     
     # Test database connection
     print("\n2. Testing Database Connection...")
-    if not database_service.test_database_connection():
+    if not test_database_connection():
         print("❌ Database connection failed!")
         return False
     print("✅ Database connection successful!")
@@ -38,7 +39,7 @@ def test_complete_flow():
     # Setup database indexes
     print("\n3. Setting up Database Indexes...")
     try:
-        database_service.setup_database_indexes()
+        setup_database_indexes()
         print("✅ Database indexes created successfully!")
     except Exception as e:
         print(f"❌ Error setting up indexes: {e}")
@@ -63,7 +64,7 @@ def test_complete_flow():
             # Step 1: Google Search
             print(f"\nStep 1: Executing Google search for '{query}'...")
             start_time = time.time()
-            search_results = google_service.search_multiple_pages(query)
+            search_results = search_multiple_pages(query)
             search_time = time.time() - start_time
             
             if not search_results:
@@ -75,7 +76,7 @@ def test_complete_flow():
             # Step 2: URL Validation and Type Detection
             print(f"\nStep 2: Filtering and detecting URL types...")
             start_time = time.time()
-            valid_urls = google_service.filter_valid_urls(search_results)
+            valid_urls = filter_valid_urls(search_results)
             filter_time = time.time() - start_time
             
             if not valid_urls:
@@ -98,7 +99,7 @@ def test_complete_flow():
             # Step 3: Database Storage
             print(f"\nStep 3: Saving URLs to database...")
             start_time = time.time()
-            storage_stats = database_service.save_multiple_urls(valid_urls, query)
+            storage_stats = save_multiple_urls(valid_urls, query)
             storage_time = time.time() - start_time
             
             print(f"✅ Storage completed in {storage_time:.2f} seconds")
@@ -108,7 +109,7 @@ def test_complete_flow():
             
             # Step 4: Verify Database Storage
             print(f"\nStep 4: Verifying database storage...")
-            stored_urls = database_service.get_urls_by_query(query)
+            stored_urls = get_urls_by_query(query)
             
             if len(stored_urls) >= storage_stats['new_inserted']:
                 print(f"✅ Database verification successful! Found {len(stored_urls)} URLs for query")
@@ -148,7 +149,7 @@ def test_complete_flow():
         
         # Show final database statistics
         print(f"\nFinal Database Statistics:")
-        final_stats = database_service.get_database_stats()
+        final_stats = get_database_stats()
         print(f"  Total URLs: {final_stats['total_urls']}")
         print(f"  Unique Search Queries: {final_stats['unique_search_queries']}")
         print(f"  Unique URL Types: {final_stats['unique_url_types']}")
@@ -177,7 +178,7 @@ def test_single_query(query):
     try:
         # Step 1: Google Search
         print(f"1. Searching Google for '{query}'...")
-        search_results = google_service.search_multiple_pages(query)
+        search_results = search_multiple_pages(query)
         
         if not search_results:
             print("❌ No search results found")
@@ -190,12 +191,12 @@ def test_single_query(query):
         for i, result in enumerate(search_results[:3], 1):
             print(f"  {i}. {result.get('title', 'No title')}")
             print(f"     URL: {result.get('url', 'No URL')}")
-            print(f"     Type: {google_service.detect_url_type(result.get('url', ''))}")
+            print(f"     Type: {detect_url_type(result.get('url', ''))}")
             print()
         
         # Step 2: URL Filtering
         print("2. Filtering and detecting URL types...")
-        valid_urls = google_service.filter_valid_urls(search_results)
+        valid_urls = filter_valid_urls(search_results)
         
         if not valid_urls:
             print("❌ No valid URLs found")
@@ -216,7 +217,7 @@ def test_single_query(query):
         
         # Step 3: Database Storage
         print("\n3. Saving to database...")
-        storage_stats = database_service.save_multiple_urls(valid_urls, query)
+        storage_stats = save_multiple_urls(valid_urls, query)
         
         print(f"✅ Storage completed:")
         print(f"  - New URLs added: {storage_stats['new_inserted']}")

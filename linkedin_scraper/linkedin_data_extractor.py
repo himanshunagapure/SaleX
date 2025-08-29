@@ -12,7 +12,7 @@ import re
 import time
 from typing import Dict, Any, Optional, List
 from bs4 import BeautifulSoup
-from browser_manager import BrowserManager
+from linkedin_scraper.browser_manager import BrowserManager
 
 
 class LinkedInDataExtractor:

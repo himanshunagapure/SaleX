@@ -1,6 +1,6 @@
 from pymongo import MongoClient
 from datetime import datetime
-from config import (
+from web_url_scraper.config import (
     MONGODB_URI, 
     MONGODB_DATABASE_NAME, 
     MONGODB_COLLECTION_NAME

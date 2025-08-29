@@ -19,17 +19,34 @@ import asyncio
 import json
 import time
 import re
+import sys
+import os
 from typing import List, Dict, Any, Optional
-from linkedin_data_extractor import LinkedInDataExtractor
+
+# Add parent directory to path to import database module
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from linkedin_scraper.linkedin_data_extractor import LinkedInDataExtractor
+from database.mongodb_manager import get_mongodb_manager
 
 
 class LinkedInScraperMain:
     """Main LinkedIn Scraper class with simplified interface"""
     
-    def __init__(self, headless: bool = True, enable_anti_detection: bool = True):
+    def __init__(self, headless: bool = True, enable_anti_detection: bool = True, use_mongodb: bool = True):
         self.headless = headless
         self.enable_anti_detection = enable_anti_detection
+        self.use_mongodb = use_mongodb
         self.extractor = None
+        
+        # Initialize MongoDB manager if needed
+        if self.use_mongodb:
+            try:
+                self.mongodb_manager = get_mongodb_manager()
+                print("✅ MongoDB connection initialized")
+            except Exception as e:
+                print(f"⚠️ Failed to initialize MongoDB: {e}")
+                self.use_mongodb = False
     
     async def scrape_async(self, urls: List[str], output_filename: str = "linkedin_scraped_data.json") -> Dict[str, Any]:
         """Async method to scrape LinkedIn URLs"""
@@ -405,17 +422,34 @@ class LinkedInScraperMain:
         return False
     
     def _save_results_to_file(self, results: Dict[str, Any], filename: str) -> None:
-        """Save results to JSON file"""
+        """Save results to JSON file and MongoDB"""
         
+        # Save to MongoDB if enabled
+        mongodb_stats = None
+        if self.use_mongodb and results.get("scraped_data"):
+            try:
+                mongodb_stats = self.mongodb_manager.insert_batch_leads(results["scraped_data"], 'linkedin')
+                print(f"\n💾 Results saved to MongoDB:")
+                print(f"   - Successfully inserted: {mongodb_stats['success_count']}")
+                print(f"   - Duplicates skipped: {mongodb_stats['duplicate_count']}")
+                print(f"   - Failed insertions: {mongodb_stats['failure_count']}")
+            except Exception as e:
+                print(f"❌ Error saving to MongoDB: {e}")
+        
+        # Save to file as backup
         try:
             with open(filename, 'w', encoding='utf-8') as f:
                 json.dump(results, f, indent=2, ensure_ascii=False, default=str)
             
-            print(f"\n💾 Results saved to: {filename}")
+            print(f"\n💾 Results also saved to file: {filename}")
             print(f"   File size: {len(json.dumps(results, indent=2, ensure_ascii=False, default=str)):,} characters")
         
         except Exception as e:
             print(f"❌ Error saving results to {filename}: {e}")
+        
+        # Add MongoDB stats to results
+        if mongodb_stats:
+            results['mongodb_stats'] = mongodb_stats
     
     def _print_summary(self, results: Dict[str, Any]) -> None:
         """Print scraping summary"""
@@ -450,7 +484,7 @@ class LinkedInScraperMain:
 _scraper_instance = None
 
 
-def linkedin_scraper(urls: List[str], output_filename: str = "linkedin_scraped_data.json", headless: bool = True) -> Dict[str, Any]:
+def linkedin_scraper(urls: List[str], output_filename: str = "linkedin_scraper/linkedin_scraped_data.json", headless: bool = True) -> Dict[str, Any]:
     """
     Simple one-line LinkedIn scraper function
     
@@ -500,7 +534,7 @@ class LinkedInScraper:
     def __init__(self, headless: bool = True):
         self.scraper = LinkedInScraperMain(headless=headless, enable_anti_detection=True)
     
-    def scrape(self, urls: List[str], output_filename: str = "linkedin_scraped_data.json") -> Dict[str, Any]:
+    def scrape(self, urls: List[str], output_filename: str = "linkedin_scraper/linkedin_scraped_data.json") -> Dict[str, Any]:
         """
         Scrape LinkedIn URLs
         
@@ -524,18 +558,21 @@ class LinkedInScraper:
 
 if __name__ == "__main__":
     # Example usage
+    # test_urls = [
+    #     "https://www.linkedin.com/in/williamhgates/",
+    #     "https://www.linkedin.com/company/microsoft/",
+    #     "https://www.linkedin.com/posts/aiqod_inside-aiqod-how-were-building-enterprise-ready-activity-7348224698146541568-N7oQ",
+    #     "https://www.linkedin.com/newsletters/aiqod-insider-7325820451622940672"
+    # ]
     test_urls = [
-        "https://www.linkedin.com/in/williamhgates/",
-        "https://www.linkedin.com/company/microsoft/",
-        "https://www.linkedin.com/posts/aiqod_inside-aiqod-how-were-building-enterprise-ready-activity-7348224698146541568-N7oQ",
-        "https://www.linkedin.com/newsletters/aiqod-insider-7325820451622940672"
+        "https://www.linkedin.com/in/williamhgates/"
     ]
     # test_urls = [
     #     "https://www.linkedin.com/company/microsoft/"
     # ]
     print("Testing LinkedIn Scraper...")
     print("Method 1: Function approach")
-    results = linkedin_scraper(test_urls, "test_results.json", headless=False)
+    results = linkedin_scraper(test_urls, "linkedin_scraper/test_results.json", headless=False)
     
     # print("\nMethod 2: Class approach")
     # scraper = LinkedInScraper(headless=False)

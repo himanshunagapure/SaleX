@@ -15,8 +15,15 @@ Usage:
 import asyncio
 import json
 import time
+import sys
+import os
 from typing import List, Dict, Any, Optional
-from src.advanced_graphql_extractor import AdvancedGraphQLExtractor
+
+# Add parent directory to path to import database module
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from instagram_scraper.src.advanced_graphql_extractor import AdvancedGraphQLExtractor
+from database.mongodb_manager import get_mongodb_manager
 
 
 class InstagramScraper:
@@ -31,7 +38,8 @@ class InstagramScraper:
                  headless: bool = True, 
                  enable_anti_detection: bool = True,
                  is_mobile: bool = False,
-                 output_file: Optional[str] = None):
+                 output_file: Optional[str] = None,
+                 use_mongodb: bool = True):
         """
         Initialize the Instagram scraper
         
@@ -40,12 +48,23 @@ class InstagramScraper:
             enable_anti_detection: Enable anti-detection features (default: True)
             is_mobile: Use mobile user agent and viewport (default: False)
             output_file: Optional file path to save results (default: None)
+            use_mongodb: Whether to save data to MongoDB (default: True)
         """
         self.headless = headless
         self.enable_anti_detection = enable_anti_detection
         self.is_mobile = is_mobile
         self.output_file = output_file
+        self.use_mongodb = use_mongodb
         self.extractor = None
+        
+        # Initialize MongoDB manager if needed
+        if self.use_mongodb:
+            try:
+                self.mongodb_manager = get_mongodb_manager()
+                print("✅ MongoDB connection initialized")
+            except Exception as e:
+                print(f"⚠️ Failed to initialize MongoDB: {e}")
+                self.use_mongodb = False
         
     async def scrape(self, urls: List[str]) -> Dict[str, Any]:
         """
@@ -257,14 +276,26 @@ class InstagramScraper:
                     })
                     continue
             
-            # Save to file if specified
+            # Save to MongoDB if enabled
+            mongodb_stats = None
+            if self.use_mongodb and all_extracted_data:
+                try:
+                    mongodb_stats = self.mongodb_manager.insert_batch_leads(all_extracted_data, 'instagram')
+                    print(f"\n💾 Results saved to MongoDB:")
+                    print(f"   - Successfully inserted: {mongodb_stats['success_count']}")
+                    print(f"   - Duplicates skipped: {mongodb_stats['duplicate_count']}")
+                    print(f"   - Failed insertions: {mongodb_stats['failure_count']}")
+                except Exception as e:
+                    print(f"❌ Error saving to MongoDB: {e}")
+            
+            # Save to file if specified (as backup)
             output_file_path = None
             if self.output_file:
                 try:
                     with open(self.output_file, 'w', encoding='utf-8') as f:
                         json.dump(all_extracted_data, f, indent=2, ensure_ascii=False, default=str)
                     output_file_path = self.output_file
-                    print(f"\n💾 Results saved to: {self.output_file}")
+                    print(f"\n💾 Results also saved to file: {self.output_file}")
                 except Exception as e:
                     print(f"❌ Error saving to file: {e}")
             
@@ -322,6 +353,7 @@ class InstagramScraper:
                 'summary': summary,
                 'errors': errors,
                 'output_file': output_file_path,
+                'mongodb_stats': mongodb_stats,
                 'stealth_report': final_stealth_report
             }
             
@@ -467,9 +499,9 @@ async def main():
     
     output_file = None
     if save_file:
-        output_file = input("Enter output filename (default: instagram_scraped_data.json): ").strip()
+        output_file = input("Enter output filename (default: instagram_scraper/instagram_scraped_data.json): ").strip()
         if not output_file:
-            output_file = "instagram_scraped_data.json"
+            output_file = "instagram_scraper/instagram_scraped_data.json"
     
     print(f"\n🚀 Starting scraping with {len(urls)} URLs...")
     print("   Note: Additional profile data will be automatically extracted for article/video URLs!")

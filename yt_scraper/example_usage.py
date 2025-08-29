@@ -4,7 +4,7 @@ These examples show how to use the YouTube scraper with just 1-2 lines of code
 """
 
 import asyncio
-from main import quick_scrape, quick_batch_scrape, quick_file_scrape
+from yt_scraper.main import quick_scrape, quick_batch_scrape, quick_file_scrape
 
 async def example_1_single_url():
     """Example 1: Scrape a single YouTube URL"""
@@ -22,14 +22,18 @@ async def example_2_multiple_urls():
     """Example 2: Scrape multiple YouTube URLs"""
     print("Example 2: Multiple URLs scraping")
     
+    # urls = [
+    #     "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    #     "https://www.youtube.com/shorts/YIe4jPsvv5g",
+    #     "https://www.youtube.com/@stillwatchingnetflix"
+    # ]
+
     urls = [
-        "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-        "https://www.youtube.com/shorts/YIe4jPsvv5g",
-        "https://www.youtube.com/@stillwatchingnetflix"
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
     ]
     
     # 1 line to scrape multiple URLs
-    success = await quick_batch_scrape(urls, "batch_results.json")
+    success = await quick_batch_scrape(urls, "yt_scraper/batch_results.json")
     
     if success:
         print("✅ Batch data saved to batch_results.json")

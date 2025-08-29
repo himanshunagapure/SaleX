@@ -4,7 +4,7 @@ Demonstrates how to use the scraper with simple one-line calls
 """
 
 import asyncio
-from main import InstagramScraper, scrape_instagram_urls
+from instagram_scraper.main import InstagramScraper, scrape_instagram_urls
 
 
 async def example_1_simple_usage():
@@ -48,7 +48,7 @@ async def example_2_with_options():
         headless=False,  # Show browser window
         enable_anti_detection=True,
         is_mobile=True,  # Use mobile mode
-        output_file="custom_output.json"
+        output_file="instagram_scraper/custom_output.json"
     )
     
     print(f"✅ Custom scraping completed!")
@@ -74,7 +74,7 @@ async def example_3_class_usage():
         headless=True,
         enable_anti_detection=True,
         is_mobile=False,
-        output_file="class_output.json"
+        output_file="instagram_scraper/class_output.json"
     )
     
     # Use the scraper
@@ -106,7 +106,7 @@ async def example_4_batch_processing():
         urls=urls,
         headless=True,
         enable_anti_detection=True,
-        output_file="batch_output.json"
+        output_file="instagram_scraper/batch_output.json"
     )
     
     print(f"✅ Batch processing completed!")

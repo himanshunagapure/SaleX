@@ -31,7 +31,13 @@ from web_scraper.storage.export import ExportManager
 import os
 import re
 import json
+import sys
 from urllib.parse import urlparse
+
+# Add parent directory to path to import database module
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from database.mongodb_manager import get_mongodb_manager
 
 class WebScraperOrchestrator:
     """Main orchestrator for the web scraping pipeline"""
@@ -41,7 +47,8 @@ class WebScraperOrchestrator:
                  enable_ai: bool = True,
                  enable_quality_engine: bool = True,
                  max_workers: int = 5,
-                 delay_between_requests: float = 1.0):
+                 delay_between_requests: float = 1.0,
+                 use_mongodb: bool = True):
         """
         Initialize the orchestrator
         
@@ -51,6 +58,7 @@ class WebScraperOrchestrator:
             enable_quality_engine: Whether to use data quality engine
             max_workers: Maximum concurrent workers for processing
             delay_between_requests: Delay between requests to avoid rate limiting
+            use_mongodb: Whether to save data to MongoDB (default: True)
         """
         self.storage = LeadStorage(storage_path)
         self.export_manager = ExportManager(self.storage)
@@ -60,10 +68,20 @@ class WebScraperOrchestrator:
         self.enable_quality_engine = enable_quality_engine
         self.max_workers = max_workers
         self.delay_between_requests = delay_between_requests
+        self.use_mongodb = use_mongodb
         
         # Track processed URLs to avoid duplicates
         self.processed_urls: Set[str] = set()
         self.duplicate_leads: List[Dict[str, Any]] = []
+        
+        # Initialize MongoDB manager if needed
+        if self.use_mongodb:
+            try:
+                self.mongodb_manager = get_mongodb_manager()
+                logger.info("✅ MongoDB connection initialized")
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to initialize MongoDB: {e}")
+                self.use_mongodb = False
         
         logger.info(f"Initialized WebScraperOrchestrator with storage at {storage_path}")
     
@@ -285,33 +303,36 @@ class WebScraperOrchestrator:
                     logger.warning(f"AI enhancement failed for {url}: {e}")
             
             '''
-            #save html and sections for debugging
-            html_path, sections_path = self.save_debug_results(
-                url=url,
-                page_html=page_content.html,
-                sections=processed_content.get("sections", [])
-            )
-            
-            logger.debug(f"HTML saved for {url}")
-            logger.debug(f"Sections saved for {url}")
             
             logger.debug(f"moved to step 6 towards extraction of lead information for {url}")
+
+            # Debug the cleaned_text to see what type it is
+            cleaned_text = processed_content.get("cleaned_text", "")
+            if isinstance(cleaned_text, dict):
+                print(f' cleaned_text keys = {list(cleaned_text.keys())}')
+
+            # Ensure cleaned_text is a string before passing it
+            if not isinstance(cleaned_text, str):
+                if isinstance(cleaned_text, dict):
+                    # Extract text content from the dict
+                    text_parts = []
+                    for key, value in cleaned_text.items():
+                        if isinstance(value, str):
+                            text_parts.append(value)
+                    cleaned_text = " ".join(text_parts) if text_parts else ""
+                else:
+                    cleaned_text = str(cleaned_text) if cleaned_text is not None else ""
+
             # Step 6: Extract lead information with AI integration
             lead_info = extract_lead_information(
                 page_content.html, 
-                processed_content.get("cleaned_text", ""), 
+                cleaned_text, 
                 url,
                 sections=processed_content.get("sections", []),
                 structured_data=processed_content.get("structured_data", [])  # Pass structured data
             )
             lead_info["extraction_metadata"]["extraction_timestamp"] = datetime.now().isoformat()
             logger.debug(f"Extract lead information for {url}")
-
-            html_path, sections_path = self.save_debug_results(
-                url=url,
-                sections=lead_info["ai_lead_info"]
-            )
-            logger.debug(f"Sections saved before AI integration for {url}")
 
             # AI Integration Pipeline (Phases 3-4)
             lead_info["ai_leads"] = []
@@ -330,9 +351,9 @@ class WebScraperOrchestrator:
                     # Phase 4: AI extraction from filtered sections + structured data
                     if filtered_ai_lead_info or lead_info.get("structured_data_summary"):
                         ai_extracted_data = extract_client_info_from_sections(ai_input_data, url) 
-                        print("======================== inside main_app.py Lead info after ai.py retutns========================================")
-                        print(f' AI leads = {ai_extracted_data}')
-                        print("======================== inside main_app.py Lead info ========================================")
+                        # print("======================== inside main_app.py Lead info after ai.py retutns========================================")
+                        # print(f' AI leads = {ai_extracted_data}')
+                        # print("======================== inside main_app.py Lead info ========================================")
                         # Phase 5: Store AI leads under "ai_leads" key
                         if ai_extracted_data:
                             lead_info["ai_leads"] = [{
@@ -363,9 +384,9 @@ class WebScraperOrchestrator:
                     logger.debug(f"Data quality processing completed for {url}")
                 except Exception as e:
                     logger.warning(f"Data quality processing failed for {url}: {e}")
-            print("======================== inside main_app.py Lead info ========================================")
-            print(f' AI leads = {lead_info.get("ai_leads")}')
-            print("======================== inside main_app.py Lead info ========================================")
+            # print("======================== inside main_app.py Lead info ========================================")
+            # print(f' AI leads = {lead_info.get("ai_leads")}')
+            # print("======================== inside main_app.py Lead info ========================================")
 
             # Convert to LeadModel
             lead_model = LeadModel.from_extraction_data(lead_info, url)
@@ -376,34 +397,81 @@ class WebScraperOrchestrator:
         except Exception as e:
             logger.error(f"Failed to extract lead from {fetch_result.get('url', 'unknown')}: {e}")
             return None
-    
+
     def detect_duplicate_lead(self, new_lead: LeadModel, existing_leads: List[LeadModel]) -> Optional[LeadModel]:
         """
         Detect if a lead is a duplicate based on multiple criteria
-        
         Returns:
-            Existing duplicate lead if found, None otherwise
+        Existing duplicate lead if found, None otherwise
         """
+        
+        def normalize_field(field):
+            """Helper function to normalize fields that might be strings or lists"""
+            if field is None:
+                return []
+            if isinstance(field, str):
+                return [field]
+            if isinstance(field, list):
+                return field
+            return []
+        
+        def get_emails(lead):
+            """Extract emails as a list of normalized strings"""
+            emails = normalize_field(lead.email)
+            return [email.lower().strip() for email in emails if email]
+        
+        def get_websites(lead):
+            """Extract websites as a list of normalized strings"""
+            websites = normalize_field(lead.website)
+            return [website.strip() for website in websites if website]
+        
+        def get_business_name(lead):
+            """Extract business name as a normalized string"""
+            business_name = lead.business_name
+            if isinstance(business_name, list):
+                # If it's a list, take the first non-empty item
+                business_name = next((name for name in business_name if name), None)
+            return business_name.lower().strip() if business_name else None
+
         for existing_lead in existing_leads:
             # Check for exact email match
-            if (new_lead.email and existing_lead.email and 
-                new_lead.email.lower() == existing_lead.email.lower()):
-                return existing_lead
+            new_emails = get_emails(new_lead)
+            existing_emails = get_emails(existing_lead)
+            
+            # Check if any email matches
+            if new_emails and existing_emails:
+                for new_email in new_emails:
+                    if new_email in existing_emails:
+                        return existing_lead
             
             # Check for exact phone match
-            if (new_lead.phone and existing_lead.phone and 
-                self._normalize_phone(new_lead.phone) == self._normalize_phone(existing_lead.phone)):
-                return existing_lead
+            if (new_lead.phone and existing_lead.phone):
+                # Handle phone as potential list
+                new_phones = normalize_field(new_lead.phone)
+                existing_phones = normalize_field(existing_lead.phone)
+                
+                for new_phone in new_phones:
+                    for existing_phone in existing_phones:
+                        if (new_phone and existing_phone and
+                            self._normalize_phone(new_phone) == self._normalize_phone(existing_phone)):
+                            return existing_lead
             
             # Check for business name + website combination
-            if (new_lead.business_name and existing_lead.business_name and
-                new_lead.website and existing_lead.website and
-                new_lead.business_name.lower() == existing_lead.business_name.lower() and
-                new_lead.website == existing_lead.website):
-                return existing_lead
+            new_business_name = get_business_name(new_lead)
+            existing_business_name = get_business_name(existing_lead)
+            new_websites = get_websites(new_lead)
+            existing_websites = get_websites(existing_lead)
+            
+            if (new_business_name and existing_business_name and
+                new_websites and existing_websites and
+                new_business_name == existing_business_name):
+                # Check if any website matches
+                for new_website in new_websites:
+                    if new_website in existing_websites:
+                        return existing_lead
         
         return None
-    
+
     def _normalize_phone(self, phone: str) -> str:
         """Normalize phone number for comparison"""
         return ''.join(filter(str.isdigit, phone))
@@ -497,6 +565,15 @@ class WebScraperOrchestrator:
                         else:
                             # Update existing lead in storage
                             self.storage.save_lead(merged_lead)
+                            
+                            # Save to MongoDB if enabled
+                            if self.use_mongodb:
+                                try:
+                                    lead_dict = merged_lead.dict()
+                                    lead_dict['domain'] = urlparse(merged_lead.source_url).netloc
+                                    self.mongodb_manager.insert_web_lead(lead_dict)
+                                except Exception as e:
+                                    logger.error(f"❌ Error saving to MongoDB: {e}")
                         
                         self.duplicate_leads.append({
                             "original_url": duplicate.source_url,
@@ -514,7 +591,7 @@ class WebScraperOrchestrator:
         
         return successful_leads, failed_urls
     
-    def generate_final_leads(self, all_successful_leads: List[LeadModel], export_path: str = None) -> Optional[str]:
+    def generate_final_leads(self, all_successful_leads: List[LeadModel], export_path: str = None) -> Optional[Tuple[str, List[Dict[str, Any]]]]:
         """
         Generate final leads JSON by merging traditional and AI extraction results
         
@@ -612,7 +689,7 @@ class WebScraperOrchestrator:
                 json.dump(final_data, f, indent=2, ensure_ascii=False, default=str)
             
             logger.info(f"Final leads saved to: {final_leads_path}")
-            return str(final_leads_path)
+            return str(final_leads_path), final_data["leads"]
             
         except Exception as e:
             logger.error(f"Failed to generate final leads: {e}")
@@ -745,15 +822,35 @@ class WebScraperOrchestrator:
                 logger.error(f"Export failed: {e}")
         
         # Generate final leads if requested
-        final_leads_file = None
+        final_leads_file, final_leads = None, []
         if generate_final_leads and all_successful_leads:
             try:
-                final_leads_file = self.generate_final_leads(all_successful_leads, export_path)
-                if final_leads_file:
-                    logger.info(f"Final leads generated: {final_leads_file}")
+                result = self.generate_final_leads(all_successful_leads, export_path)
+                if result:
+                    final_leads_file, final_leads = result  # unpack (path, leads)
+                    logger.info(f"Final leads generated: {final_leads_file} with {len(final_leads)} leads")
             except Exception as e:
                 logger.error(f"Final leads generation failed: {e}")
-        
+        print("="*20)
+        print(final_leads)
+        print("="*20)
+        # Save to MongoDB if enabled
+        if self.use_mongodb:
+            try:
+                leads_data = []
+                for lead in final_leads:
+                    lead_dict = lead if isinstance(lead, dict) else lead.dict()
+            
+                    # Add domain information
+                    if lead_dict.get('source_url'):
+                        lead_dict['domain'] = urlparse(lead_dict['source_url']).netloc
+                    leads_data.append(lead_dict)
+                
+                mongodb_stats = self.mongodb_manager.insert_batch_leads(leads_data, 'web')
+                logger.info(f"✅ Batch saved to MongoDB - Success: {mongodb_stats['success_count']}, Duplicates: {mongodb_stats['duplicate_count']}, Failures: {mongodb_stats['failure_count']}")
+            except Exception as e:
+                logger.error(f"❌ Error saving to MongoDB: {e}")
+
         # Generate pipeline statistics
         end_time = datetime.now()
         duration = (end_time - start_time).total_seconds()

@@ -8,7 +8,7 @@ from bs4 import BeautifulSoup
 from loguru import logger
 
 from web_scraper.data_models.models import PageContent
-from web_scraper.utils.anti_detection import AntiDetectionManager, execute_human_behavior
+from web_scraper.utils.anti_detection import AntiDetectionManager, execute_human_behavior, create_stealth_browser_context
 
 
 async def _ensure_playwright():
@@ -24,7 +24,6 @@ async def _ensure_playwright():
 async def _create_context(pw):
 	try:
 		# Optional anti-detection integration
-		from .anti_detection import create_stealth_browser_context  # type: ignore
 		adm = AntiDetectionManager(
 			enable_fingerprint_evasion=True,
 			enable_behavioral_mimicking=True,

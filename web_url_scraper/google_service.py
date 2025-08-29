@@ -2,7 +2,7 @@ import requests
 import time
 import re
 from urllib.parse import quote, urlparse
-from config import (
+from web_url_scraper.config import (
     GOOGLE_API_KEY, 
     GOOGLE_SEARCH_ENGINE_ID, 
     MAX_PAGES, 
@@ -164,7 +164,7 @@ def detect_url_type(url):
         url (str): URL to analyze
     
     Returns:
-        str: URL type ('instagram', 'facebook', 'reddit', 'quora', 'twitter', 'linkedin', 'general')
+        str: URL type ('instagram', 'facebook', 'reddit', 'quora', 'twitter', 'linkedin', 'youtube', 'general')
     """
     if not url:
         return 'general'
@@ -191,6 +191,8 @@ def detect_url_type(url):
             return 'twitter'
         elif domain == 'linkedin.com' or domain.endswith('.linkedin.com'):
             return 'linkedin'
+        elif domain == 'youtube.com' or domain.endswith('.youtube.com'):
+            return 'youtube'
         else:
             return 'general'
             

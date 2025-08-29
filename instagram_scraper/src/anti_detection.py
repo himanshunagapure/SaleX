@@ -84,35 +84,31 @@ class AntiDetectionManager:
             'timezones': {
                 'Windows': [
                     'America/New_York', 'America/Los_Angeles', 'America/Chicago',
-                    'Europe/London', 'Europe/Paris', 'Europe/Berlin',
-                    'America/Toronto', 'America/Sao_Paulo'
+                    'Europe/London', 'America/Toronto', 'Australia/Sydney'
                 ],
                 'Win32': [
                     'America/New_York', 'America/Los_Angeles', 'America/Chicago',
-                    'Europe/London', 'Europe/Paris', 'Europe/Berlin',
-                    'America/Toronto', 'America/Sao_Paulo'
+                    'Europe/London', 'America/Toronto', 'Australia/Sydney'
                 ],
                 'MacIntel': [
                     'America/New_York', 'America/Los_Angeles', 'America/Chicago',
-                    'America/Toronto', 'Europe/London', 'Europe/Paris'
+                    'America/Toronto', 'Europe/London', 'Australia/Sydney'
                 ],
                 'Linux': [
-                    'Europe/London', 'Europe/Paris', 'Europe/Berlin',
-                    'America/New_York', 'America/Los_Angeles'
+                    'Europe/London', 'America/New_York', 'America/Los_Angeles',
+                    'America/Toronto', 'Australia/Sydney'
                 ],
                 'Linux x86_64': [
-                    'Europe/London', 'Europe/Paris', 'Europe/Berlin',
-                    'America/New_York', 'America/Los_Angeles'
+                    'Europe/London', 'America/New_York', 'America/Los_Angeles',
+                    'America/Toronto', 'Australia/Sydney'
                 ],
                 'Mobile': [
                     'America/New_York', 'America/Los_Angeles', 'Europe/London',
-                    'Asia/Tokyo', 'Asia/Shanghai', 'Australia/Sydney'
+                    'America/Toronto', 'Australia/Sydney'
                 ]
             },
             'locales': [
-                'en-US', 'en-GB', 'en-CA', 'en-AU',
-                'es-ES', 'es-MX', 'fr-FR', 'de-DE',
-                'it-IT', 'pt-BR', 'ja-JP', 'ko-KR'
+                'en-US', 'en-GB', 'en-CA', 'en-AU'
             ],
             # Screen resolutions
             'screen_resolutions': [

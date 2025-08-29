@@ -12,7 +12,7 @@ import re
 import time
 from typing import Dict, Any, Optional, List
 from bs4 import BeautifulSoup
-from browser_manager import YouTubeBrowserManager
+from yt_scraper.browser_manager import YouTubeBrowserManager
 import zstandard as zstd
 
 class AdvancedYouTubeExtractor:
@@ -902,7 +902,7 @@ class AdvancedYouTubeExtractor:
             except Exception as e2:
                 print(f"❌ Failed to save even simplified data: {e2}")
 
-    async def save_clean_final_output(self, all_extracted_data: List[Dict[str, Any]], filename: str = "youtube_final_output.json") -> None:
+    async def save_clean_final_output(self, all_extracted_data: List[Dict[str, Any]], filename: str = "youtube_final_output.json") -> List[Dict[str, Any]]:
         """Save clean, structured data to a final output JSON file"""
         
         final_output = []
@@ -984,6 +984,8 @@ class AdvancedYouTubeExtractor:
             
         except Exception as e:
             print(f"❌ Error saving clean output to JSON: {e}")
+
+        return final_output
 
     async def extract_and_save_clean_data_from_urls(self, urls: List[str], filename: str = "youtube_final_output.json") -> None:
         """Extract data from a list of URLs and save in clean format"""

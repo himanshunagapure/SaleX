@@ -24,16 +24,31 @@ import argparse
 import sys
 import os
 from typing import List, Optional
-from yt_data_extractor import AdvancedYouTubeExtractor
+
+# Add parent directory to path to import database module
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from yt_scraper.yt_data_extractor import AdvancedYouTubeExtractor
+from database.mongodb_manager import get_mongodb_manager
 
 class YouTubeScraperInterface:
     """Simple interface for YouTube data extraction"""
     
-    def __init__(self, headless: bool = True, enable_anti_detection: bool = True):
+    def __init__(self, headless: bool = True, enable_anti_detection: bool = True, use_mongodb: bool = True):
         """Initialize the scraper interface"""
         self.headless = headless
         self.enable_anti_detection = enable_anti_detection
+        self.use_mongodb = use_mongodb
         self.extractor = None
+        
+        # Initialize MongoDB manager if needed
+        if self.use_mongodb:
+            try:
+                self.mongodb_manager = get_mongodb_manager()
+                print("✅ MongoDB connection initialized")
+            except Exception as e:
+                print(f"⚠️ Failed to initialize MongoDB: {e}")
+                self.use_mongodb = False
     
     async def scrape_single_url(self, url: str, output_file: str = "youtube_data.json") -> bool:
         """
@@ -63,7 +78,18 @@ class YouTubeScraperInterface:
                 print(f"❌ Failed to extract data: {data['error']}")
                 return False
             
-            # Save clean output
+            # Save to MongoDB if enabled
+            if self.use_mongodb:
+                try:
+                    mongodb_stats = self.mongodb_manager.insert_batch_leads([data], 'youtube')
+                    print(f"✅ Successfully scraped and saved to MongoDB:")
+                    print(f"   - Successfully inserted: {mongodb_stats['success_count']}")
+                    print(f"   - Duplicates skipped: {mongodb_stats['duplicate_count']}")
+                    print(f"   - Failed insertions: {mongodb_stats['failure_count']}")
+                except Exception as e:
+                    print(f"❌ Error saving to MongoDB: {e}")
+            
+            # Save clean output to file as backup
             await self.extractor.save_clean_final_output([data], output_file)
             
             print(f"✅ Successfully scraped and saved to {output_file}")
@@ -97,10 +123,33 @@ class YouTubeScraperInterface:
             
             await self.extractor.start()
             
-            # Extract and save data in one go
-            await self.extractor.extract_and_save_clean_data_from_urls(urls, output_file)
+            # Extract data first
+            all_data = []
+            for url in urls:
+                try:
+                    data = await self.extractor.extract_youtube_data(url)
+                    if not data.get('error'):
+                        all_data.append(data)
+                except Exception as e:
+                    print(f"❌ Error extracting data from {url}: {e}")
             
-            print(f"✅ Successfully scraped {len(urls)} URLs and saved to {output_file}")
+            # Save to file as backup
+            final_output = await self.extractor.save_clean_final_output(all_data, output_file)
+            
+            # Save to MongoDB if enabled
+            if self.use_mongodb and final_output:
+                try:
+                    mongodb_stats = self.mongodb_manager.insert_batch_leads(final_output, 'youtube')
+                    print(f"✅ Successfully saved to MongoDB:")
+                    print(f"   - Successfully inserted: {mongodb_stats['success_count']}")
+                    print(f"   - Duplicates skipped: {mongodb_stats['duplicate_count']}")
+                    print(f"   - Failed insertions: {mongodb_stats['failure_count']}")
+                except Exception as e:
+                    print(f"❌ Error saving to MongoDB: {e}")
+            
+
+            
+            print(f"✅ Successfully scraped {len(all_data)} URLs and saved to {output_file}")
             return True
             
         except Exception as e:
@@ -182,7 +231,7 @@ class YouTubeScraperInterface:
 
 
 # Convenience functions for 1-2 line usage
-async def quick_scrape(url: str, output: str = "youtube_data.json", headless: bool = True) -> bool:
+async def quick_scrape(url: str, output: str = "yt_scraper/youtube_data.json", headless: bool = True) -> bool:
     """
     Quick single URL scraping in 1 line
     
@@ -192,7 +241,7 @@ async def quick_scrape(url: str, output: str = "youtube_data.json", headless: bo
     scraper = YouTubeScraperInterface(headless=headless)
     return await scraper.scrape_single_url(url, output)
 
-async def quick_batch_scrape(urls: List[str], output: str = "youtube_batch_data.json", headless: bool = True) -> bool:
+async def quick_batch_scrape(urls: List[str], output: str = "yt_scraper/youtube_batch_data.json", headless: bool = True) -> bool:
     """
     Quick multiple URLs scraping in 1 line
     
@@ -202,7 +251,7 @@ async def quick_batch_scrape(urls: List[str], output: str = "youtube_batch_data.
     scraper = YouTubeScraperInterface(headless=headless)
     return await scraper.scrape_multiple_urls(urls, output)
 
-async def quick_file_scrape(file_path: str, output: str = "youtube_file_data.json", headless: bool = True) -> bool:
+async def quick_file_scrape(file_path: str, output: str = "yt_scraper/youtube_file_data.json", headless: bool = True) -> bool:
     """
     Quick file-based scraping in 1 line
     

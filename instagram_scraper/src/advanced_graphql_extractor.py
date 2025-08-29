@@ -12,7 +12,7 @@ import re
 import time
 from typing import Dict, Any, Optional, List
 from bs4 import BeautifulSoup
-from src.browser_manager import BrowserManager
+from instagram_scraper.src.browser_manager import BrowserManager
 
 
 class AdvancedGraphQLExtractor:
@@ -599,7 +599,7 @@ class AdvancedGraphQLExtractor:
         else:
             raise ValueError(f"Unknown behavior type: {behavior_type}")
 
-    async def save_scraped_data_to_json(self, profile_data: Dict[str, Any], post_data: Dict[str, Any], reel_data: Dict[str, Any], filename: str = "scraped_data.json") -> None:
+    async def save_scraped_data_to_json(self, profile_data: Dict[str, Any], post_data: Dict[str, Any], reel_data: Dict[str, Any], filename: str = "instagram_scraper/scraped_data.json") -> None:
         """Save all scraped data to a structured JSON file"""
         
         # Create structured data object
@@ -827,7 +827,7 @@ class AdvancedGraphQLExtractor:
             except Exception as e2:
                 print(f"❌ Failed to save even simplified data: {e2}")
 
-    async def save_clean_final_output(self, profile_data: Dict[str, Any], post_data: Dict[str, Any], reel_data: Dict[str, Any], filename: str = "instagram_final_output.json") -> None:
+    async def save_clean_final_output(self, profile_data: Dict[str, Any], post_data: Dict[str, Any], reel_data: Dict[str, Any], filename: str = "instagram_scraper/instagram_final_output.json") -> None:
         """Save clean, structured data to a final output JSON file"""
         
         final_output = []
@@ -999,7 +999,7 @@ class AdvancedGraphQLExtractor:
         except (ValueError, TypeError):
             return str(count) if count else None
 
-    async def extract_and_save_clean_data_from_urls(self, urls: List[str], filename: str = "instagram_final_output.json") -> None:
+    async def extract_and_save_clean_data_from_urls(self, urls: List[str], filename: str = "instagram_scraper/instagram_final_output.json") -> None:
         """Extract data from a list of URLs and save in clean format"""
         print(f"Extracting data from {len(urls)} URLs...")
         
@@ -1242,14 +1242,14 @@ async def test_advanced_graphql_extractor():
         print("SAVING SCRAPED DATA TO JSON")
         print("=" * 60)
         
-        await extractor.save_scraped_data_to_json(profile_data, post_data, reel_data, "instagram_scraped_data.json")
+        await extractor.save_scraped_data_to_json(profile_data, post_data, reel_data, "instagram_scraper/instagram_scraped_data.json")
         
         # Save clean final output
         print("\n" + "=" * 60)
         print("SAVING CLEAN FINAL OUTPUT")
         print("=" * 60)
         
-        await extractor.save_clean_final_output(profile_data, post_data, reel_data, "instagram_final_output.json")
+        await extractor.save_clean_final_output(profile_data, post_data, reel_data, "instagram_scraper/instagram_final_output.json")
         
         # Print summary
         print("\n" + "=" * 80)
@@ -1309,7 +1309,7 @@ async def example_clean_extraction():
         print("✓ Extractor started successfully")
         
         # Extract and save clean data from URLs
-        await extractor.extract_and_save_clean_data_from_urls(example_urls, "example_clean_output.json")
+        await extractor.extract_and_save_clean_data_from_urls(example_urls, "instagram_scraper/example_clean_output.json")
         
         print("\n✅ Example extraction completed!")
         print("Check 'example_clean_output.json' for the clean data structure.")

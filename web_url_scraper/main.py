@@ -1,7 +1,8 @@
 import sys
-import config
-import google_service
-import database_service
+
+from web_url_scraper.config import validate_config, get_config_summary 
+from web_url_scraper.google_service import search_multiple_pages, filter_valid_urls, detect_url_type
+from web_url_scraper.database_service import test_database_connection, setup_database_indexes, save_multiple_urls, get_urls_by_query, get_database_stats
 
 def main(search_query):
     """
@@ -26,7 +27,7 @@ def main(search_query):
         
         # Search execution
         print("Executing Google search...")
-        all_results = google_service.search_multiple_pages(search_query)
+        all_results = search_multiple_pages(search_query)
         
         if not all_results:
             print("No search results found")
@@ -36,7 +37,7 @@ def main(search_query):
         
         # URL processing - filter valid URLs
         print("Filtering valid URLs...")
-        valid_urls = google_service.filter_valid_urls(all_results)
+        valid_urls = filter_valid_urls(all_results)
         
         if not valid_urls:
             print("No valid URLs found after filtering")
@@ -46,7 +47,7 @@ def main(search_query):
         
         # Database storage
         print("Saving URLs to database...")
-        stats = database_service.save_multiple_urls(valid_urls, search_query)
+        stats = save_multiple_urls(valid_urls, search_query)
         
         # Get URL type breakdown for the current search
         url_type_breakdown = {}
@@ -92,30 +93,30 @@ def initialize_application():
     print("-" * 40)
     
     # Configuration validation
-    if not config.validate_config():
+    if not validate_config():
         print("Configuration validation failed. Please check your .env file.")
         return False
     
     # Test database connection
     print("\nTesting database connection...")
-    if not database_service.test_database_connection():
+    if not test_database_connection():
         print("Database connection test failed.")
         return False
     
     # Setup database indexes
     print("\nSetting up database indexes...")
-    database_service.setup_database_indexes()
+    setup_database_indexes()
     
     # Show configuration summary
     print("\nConfiguration Summary:")
-    config_summary = config.get_config_summary()
+    config_summary = get_config_summary()
     for key, value in config_summary.items():
         if 'key' not in key.lower() and 'id' not in key.lower():
             print(f"  {key}: {value}")
     
     # Show database statistics
     print("\nDatabase Statistics:")
-    db_stats = database_service.get_database_stats()
+    db_stats = get_database_stats()
     print(f"  Total URLs: {db_stats['total_urls']}")
     print(f"  Unique Search Queries: {db_stats['unique_search_queries']}")
     print(f"  Unique URL Types: {db_stats['unique_url_types']}")
@@ -137,7 +138,7 @@ def display_database_statistics():
     print("="*50)
     
     try:
-        stats = database_service.get_database_stats()
+        stats = get_database_stats()
         
         print(f"Total URLs: {stats['total_urls']}")
         print(f"Unique Search Queries: {stats['unique_search_queries']}")

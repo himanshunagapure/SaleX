@@ -9,7 +9,7 @@ load_dotenv()
 GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
 GOOGLE_SEARCH_ENGINE_ID = os.getenv('GOOGLE_SEARCH_ENGINE_ID')
 MONGODB_URI = os.getenv('MONGODB_URI', 'mongodb://localhost:27017/')
-MONGODB_DATABASE_NAME = os.getenv('MONGODB_DATABASE_NAME', 'url_scraper')
+MONGODB_DATABASE_NAME = os.getenv('MONGODB_DATABASE_NAME', 'lead_generation_db')
 MONGODB_COLLECTION_NAME = os.getenv('MONGODB_COLLECTION_NAME', 'scraped_urls')
 
 # MVP Constants (hardcoded for MVP)

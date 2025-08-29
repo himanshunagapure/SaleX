@@ -394,14 +394,17 @@ Return valid JSON format:
       "role": "Job title, author role, or null",
       "confidence": 0.8,
       "source": "section or data source",
-      "notes": "context if available"
+      "notes": "context if available",
+      "lead_category": "Lead Category",
+      "lead_sub_category": "Lead Sub Category"
     }}
   ],
   "organization_info": {{
     "primary_name": "Main company/brand name or null",
     "industry": "Industry/sector if identifiable, otherwise null",
     "services": ["service1", "service2"],
-    "location": "Address, city, or region if available, otherwise null"
+    "location": "Address, city, or region if available, otherwise null",
+    "organization_type": "Organization Type"
   }},
   "addresses": [
     {{
@@ -429,7 +432,8 @@ Return valid JSON format:
                 "primary_name": None,
                 "industry": None,
                 "services": [],
-                "location": None
+                "location": None,
+                "organization_type": None
             },
             "addresses": [],
             "overall_confidence": 0.0,

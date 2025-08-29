@@ -11,7 +11,7 @@ import re
 from typing import Optional, Dict, Any
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page
 from fake_useragent import UserAgent
-from anti_detection import AntiDetectionManager, create_stealth_browser_context, execute_human_behavior
+from linkedin_scraper.anti_detection import AntiDetectionManager, create_stealth_browser_context, execute_human_behavior
 
 
 class BrowserManager:

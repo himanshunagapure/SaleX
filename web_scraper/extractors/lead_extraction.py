@@ -33,6 +33,12 @@ class ContactExtractor:
     
     def extract_phones(self, text: str, html: str = "") -> List[Dict[str, Any]]:
         """Extract phone numbers with context and confidence scoring."""
+        # Type safety checks
+        if not isinstance(text, str):
+            text = str(text) if text is not None else ""
+        if not isinstance(html, str):
+            html = str(html) if html is not None else ""
+        
         phones = []
         seen = set()
         
@@ -132,6 +138,12 @@ class ContactExtractor:
 
     def extract_emails(self, text: str, html: str = "") -> List[Dict[str, Any]]:
         """Extract email addresses with role classification and confidence."""
+        # Type safety checks
+        if not isinstance(text, str):
+            text = str(text) if text is not None else ""
+        if not isinstance(html, str):
+            html = str(html) if html is not None else ""
+        
         emails = []
         seen = set()
         
@@ -203,6 +215,9 @@ class ContactExtractor:
     
     def extract_addresses(self, text: str) -> List[Dict[str, Any]]:
         """Extract physical addresses with validation."""
+        if not isinstance(text, str):
+            text = str(text) if text is not None else ""
+        
         addresses = []
         seen = set()
         
@@ -406,6 +421,26 @@ class BusinessInfoExtractor:
     
     def extract_company_details(self, text: str, html: str = "", url: str = "") -> Dict[str, Any]:
         """Extract company name, industry, and services."""
+        # Type safety for text parameter
+        if not isinstance(text, str):
+            if isinstance(text, dict):
+                # Extract text content from dict
+                text_parts = []
+                def extract_text_recursive(obj):
+                    if isinstance(obj, str):
+                        text_parts.append(obj)
+                    elif isinstance(obj, dict):
+                        for value in obj.values():
+                            extract_text_recursive(value)
+                    elif isinstance(obj, list):
+                        for item in obj:
+                            extract_text_recursive(item)
+                
+                extract_text_recursive(text)
+                text = " ".join(text_parts)
+            else:
+                text = str(text) if text is not None else ""
+            
         # Extract company name from title tag
         title_match = re.search(r'<title>(.*?)</title>', html, re.I | re.S)
         title = title_match.group(1).strip() if title_match else ""
@@ -485,26 +520,63 @@ class BusinessInfoExtractor:
     
     def _classify_industry(self, text: str) -> str:
         """Classify business industry based on content."""
-        text_lower = text.lower()
+        if text is None:
+            return 'general'
+
+        if isinstance(text, dict):
+            # Extract text content from dict if possible
+            text_content = ""
+            for key, value in text.items():
+                if isinstance(value, str):
+                    text_content += f" {value}"
+                elif isinstance(value, (list, tuple)):
+                    for item in value:
+                        if isinstance(item, str):
+                            text_content += f" {item}"
+            text = text_content.strip()
+        elif isinstance(text, (list, tuple)):
+            # Handle list/tuple inputs
+            text_parts = []
+            for item in text:
+                if isinstance(item, str):
+                    text_parts.append(item)
+                elif isinstance(item, dict):
+                    # Extract string values from dict items
+                    for v in item.values():
+                        if isinstance(v, str):
+                            text_parts.append(v)
+            text = " ".join(text_parts)
+        elif not isinstance(text, str):
+            # Convert other types to string
+            try:
+                text = str(text)
+            except Exception:
+                logger.warning(f"Could not convert {type(text)} to string for industry classification")
+                return 'general'
         
+        if not text or len(text.strip()) == 0:
+            return 'general'
+        
+        text_lower = text.lower()
+            
         industry_keywords = {
-            'education_services': [
-                'career guidance', 'career counseling', 'career test', 'psychometric test',
-                'educational counseling', 'academic guidance', 'student counseling',
-                'career development', 'skill assessment', 'aptitude test', 'career planning'
-            ],
-            'travel_agency': ['travel agency', 'travel agent', 'tour operator', 'travel service'],
-            'transportation': ['bus company', 'transportation', 'charter bus', 'shuttle service'],
-            'hospitality': ['hotel', 'resort', 'accommodation', 'hospitality'],
-            'event_planning': ['event planning', 'event management', 'wedding planner'],
-            'education': ['school', 'university', 'college', 'student', 'education'],
-            'corporate': ['corporate', 'business', 'company', 'enterprise'],
-            'nonprofit': ['nonprofit', 'charity', 'foundation', 'ngo'],
-            'government': ['government', 'municipal', 'city', 'county', 'state'],
-            'healthcare': ['hospital', 'medical', 'healthcare', 'clinic'],
-            'sports': ['sports', 'athletic', 'team', 'league'],
-            'religious': ['church', 'religious', 'faith', 'ministry']
-        }
+                'education_services': [
+                    'career guidance', 'career counseling', 'career test', 'psychometric test',
+                    'educational counseling', 'academic guidance', 'student counseling',
+                    'career development', 'skill assessment', 'aptitude test', 'career planning'
+                ],
+                'travel_agency': ['travel agency', 'travel agent', 'tour operator', 'travel service'],
+                'transportation': ['bus company', 'transportation', 'charter bus', 'shuttle service'],
+                'hospitality': ['hotel', 'resort', 'accommodation', 'hospitality'],
+                'event_planning': ['event planning', 'event management', 'wedding planner'],
+                'education': ['school', 'university', 'college', 'student', 'education'],
+                'corporate': ['corporate', 'business', 'company', 'enterprise'],
+                'nonprofit': ['nonprofit', 'charity', 'foundation', 'ngo'],
+                'government': ['government', 'municipal', 'city', 'county', 'state'],
+                'healthcare': ['hospital', 'medical', 'healthcare', 'clinic'],
+                'sports': ['sports', 'athletic', 'team', 'league'],
+                'religious': ['church', 'religious', 'faith', 'ministry']
+            }
         
         # Score each industry based on keyword matches
         industry_scores = {}
@@ -572,12 +644,46 @@ class BusinessInfoExtractor:
     
     def _calculate_travel_relevance(self, text: str) -> float:
         """Calculate relevance to travel industry (0-1 score)."""
+        # Type safety
+        if not isinstance(text, str):
+            if isinstance(text, dict):
+                text_parts = [str(v) for v in text.values() if isinstance(v, (str, int, float))]
+                text = " ".join(text_parts)
+            else:
+                try:
+                    text = str(text) if text is not None else ""
+                except Exception:
+                    return 0.0
+        
+        if not text:
+            return 0.0
+
         text_lower = text.lower()
         matches = sum(1 for keyword in self.TRAVEL_KEYWORDS if keyword in text_lower)
         return min(matches / 10.0, 1.0)  # Normalize to 0-1
     
     def identify_decision_makers(self, text: str, html: str = "") -> List[Dict[str, Any]]:
         """Identify potential decision makers with improved accuracy."""
+        
+        #Type safety for text parameter
+        if not isinstance(text, str):
+            if isinstance(text, dict):
+                text_parts = []
+                def extract_text_recursive(obj):
+                    if isinstance(obj, str):
+                        text_parts.append(obj)
+                    elif isinstance(obj, dict):
+                        for value in obj.values():
+                            extract_text_recursive(value)
+                    elif isinstance(obj, list):
+                        for item in obj:
+                            extract_text_recursive(item)
+                
+                extract_text_recursive(text)
+                text = " ".join(text_parts)
+            else:
+                text = str(text) if text is not None else ""
+        
         decision_makers = []
         
         # First, try to find structured team/about sections
@@ -868,7 +974,7 @@ class LeadScorer:
     """Calculate lead scores based on multiple factors."""
     
     def calculate_lead_score(self, contact_info: Dict[str, Any], business_info: Dict[str, Any], 
-                           intent_indicators: List[str], data_confidence: float) -> Dict[str, Any]:
+                           intent_indicators: List[Dict[str, str]], data_confidence: float) -> Dict[str, Any]:
         """Calculate comprehensive lead score (0-100)."""
         
         # Factor weights (must sum to 1.0)
@@ -972,7 +1078,7 @@ class LeadScorer:
         
         return min(score, 1.0)
     
-    def _score_intent_indicators(self, intent_indicators: List[str]) -> float:
+    def _score_intent_indicators(self, intent_indicators: List[Dict[str, str]]) -> float:
         """Score intent indicators (0-1)."""
         if not intent_indicators:
             return 0.0
@@ -983,9 +1089,20 @@ class LeadScorer:
         
         score = 0.0
         for indicator in intent_indicators:
-            if any(hi in indicator.lower() for hi in high_intent):
+            # Extract both category and match values to check
+            category = indicator.get('category', '').lower()
+            match = indicator.get('match', '').lower()
+            
+            # Check category
+            if any(hi in category for hi in high_intent):
                 score += 0.3
-            elif any(mi in indicator.lower() for mi in medium_intent):
+            elif any(mi in category for mi in medium_intent):
+                score += 0.1
+            
+            # Check match value
+            if any(hi in match for hi in high_intent):
+                score += 0.3
+            elif any(mi in match for mi in medium_intent):
                 score += 0.1
         
         return min(score, 1.0)
@@ -1321,13 +1438,29 @@ def _filter_structured_data_for_ai(structured_data: List[Dict]) -> Dict:
 
 def _filter_json_ld_for_ai(structured_data):
     """Filter JSON-LD data for AI analysis."""
+    if not structured_data:
+        return []
+    
+    # Handle case where structured_data is a dict instead of list
+    if isinstance(structured_data, dict):
+        structured_data = [structured_data]
+    elif not isinstance(structured_data, list):
+        return []
+    
     structured_data_summary = []
     for json_obj in structured_data:
-        json_str = json.dumps(json_obj)
-        wrapped_str = f"'''{json_str}'''"
-        filtered_obj = filter_jsonld(wrapped_str)
-        if filtered_obj:  # Only add non-empty results
-            structured_data_summary.append(filtered_obj)
+        try:
+            if not isinstance(json_obj, dict):
+                continue
+                
+            json_str = json.dumps(json_obj)
+            wrapped_str = f"'''{json_str}'''"
+            filtered_obj = filter_jsonld(wrapped_str)
+            if filtered_obj:
+                structured_data_summary.append(filtered_obj)
+        except (TypeError, ValueError) as e:
+            logger.warning(f"Error filtering JSON-LD object: {e}")
+            continue
 
     return structured_data_summary
     
@@ -1336,18 +1469,59 @@ def extract_lead_information(html: str, text: str, url: str = "",
                            sections: List[Dict[str, str]] = None,
                            structured_data: List[Dict] = None) -> Dict[str, Any]:
     """Main function to extract comprehensive lead information."""
-    logger.info("Starting lead information extraction")
+    logger.info(f"Starting lead information extraction for {url}")
+    
+    # Debug logging to identify the issue
+    logger.debug(f"Text type: {type(text)}, HTML type: {type(html)}")
+    
+    # Enhanced type safety checks
+    if not isinstance(html, str):
+        html = str(html) if html is not None else ""
+    
+    if not isinstance(text, str):
+        if isinstance(text, dict):
+            logger.warning(f"Text parameter is dict, extracting string content: {list(text.keys())}")
+            # Extract text content from dict
+            text_parts = []
+            def extract_text_recursive(obj):
+                if isinstance(obj, str):
+                    text_parts.append(obj)
+                elif isinstance(obj, dict):
+                    for key, value in obj.items():
+                        if key in ['name', 'description', 'reviewBody', 'text', 'content']:
+                            extract_text_recursive(value)
+                elif isinstance(obj, list):
+                    for item in obj:
+                        extract_text_recursive(item)
+            
+            extract_text_recursive(text)
+            text = " ".join(text_parts)
+            logger.debug(f"Converted dict to text, length: {len(text)}")
+        elif isinstance(text, (list, tuple)):
+            text_parts = []
+            for item in text:
+                if isinstance(item, str):
+                    text_parts.append(item)
+                elif isinstance(item, dict):
+                    for value in item.values():
+                        if isinstance(value, str):
+                            text_parts.append(value)
+            text = " ".join(text_parts)
+        else:
+            text = str(text) if text is not None else ""
+    
+    if not isinstance(url, str):
+        url = str(url) if url is not None else ""
+    
+    # Ensure text is not empty after conversion
+    if not text.strip():
+        logger.warning("Text content is empty after type conversion")
+        text = "No text content available"
     
     # Initialize extractors
     contact_extractor = ContactExtractor()
     business_extractor = BusinessInfoExtractor()
     scorer = LeadScorer()
-    
-    # Extract contact information from main text
-    phones = contact_extractor.extract_phones(text, html)
-    emails = contact_extractor.extract_emails(text, html)
-    addresses = contact_extractor.extract_addresses(text)
-    web_social = contact_extractor.extract_websites_social(text, html, url)
     
     # Process sections if provided for AI lead extraction
     ai_lead_info = []
@@ -1370,8 +1544,7 @@ def extract_lead_information(html: str, text: str, url: str = "",
     # NEW: Merge structured data with extracted data
     phones.extend(structured_contact_info.get("phones", []))
     emails.extend(structured_contact_info.get("emails", []))
-    addresses.extend(structured_contact_info.get("addresses", []))
-    
+
     contact_info = {
         "phones": phones,
         "emails": emails,
@@ -1379,7 +1552,9 @@ def extract_lead_information(html: str, text: str, url: str = "",
         "websites": web_social["websites"],
         "social_media": web_social["social_media"]
     }
-    
+    print("="*100)
+    print("Contact info: ", contact_info)
+    print("="*100)
     # Extract business information
     company_details = business_extractor.extract_company_details(text, html, url)
     decision_makers = business_extractor.identify_decision_makers(text, html)
@@ -1393,7 +1568,9 @@ def extract_lead_information(html: str, text: str, url: str = "",
     
     # Add decision makers to contact info for scoring
     contact_info["decision_makers"] = decision_makers
-    
+    print("="*100)
+    print("Business info: ", business_info)
+    print("="*100)
     # Extract intent indicators (simple keyword matching for now)
     intent_categories = {
         "travel_planning": [
@@ -1427,15 +1604,16 @@ def extract_lead_information(html: str, text: str, url: str = "",
         "general_inquiry": 1.0,
         "past_travel": 0.4
     }
-    
+    print("\nStill running: reached suspicious place")
     text_lower = text.lower()
     intent_indicators: List[Dict[str, str]] = []
-    
+    print("\nStill running: Passed suspicious place")
+
     for category, keywords in intent_categories.items():
         for keyword in keywords:
             if keyword in text_lower:
                 intent_indicators.append({"category": category, "match": keyword})
-    
+    print("\nStill running: Passed suspicious place 2")
     # Compute intent score (take strongest signal)
     intent_score = max(
         (intent_weights.get(ind["category"], 0) for ind in intent_indicators),
@@ -1448,18 +1626,24 @@ def extract_lead_information(html: str, text: str, url: str = "",
         all_confidences.extend([item.get('confidence', 0) for item in item_list])
     
     data_confidence = sum(all_confidences) / len(all_confidences) if all_confidences else 0.5
-    
+    # print("\n================intent and dc ==========================\n")
+    # print(intent_indicators)
+    # print('\n')
+    # print(data_confidence)
+    # print("\n================End==========================\n")
+
+    print("\nStill running: Passed suspicious place 3")
     # Calculate lead score
     lead_score = scorer.calculate_lead_score(contact_info, business_info, intent_indicators, data_confidence)
-    print("\n================Start: Inside Lead extraction py==========================\n")
-    print(structured_data)
-    print("\n================End: Inside Lead extraction py==========================\n")
+    # print("\n================Start: Inside Lead extraction py==========================\n")
+    # print(structured_data)
+    # print("\n================End: Inside Lead extraction py==========================\n")
 
     structured_data_summary = _filter_json_ld_for_ai(structured_data) if structured_data else []
-    print("\n================Start: Inside Lead extraction py: after ai filter ==========================\n")
-    print(structured_data_summary)
-    print("\n================End: Inside Lead extraction py==========================\n")
-
+    # print("\n================Start: Inside Lead extraction py: after ai filter ==========================\n")
+    # print(structured_data_summary)
+    # print("\n================End: Inside Lead extraction py==========================\n")
+    # print("\n=========== Still running: Passed suspicious place 4===========")
     return {
         "contact_information": contact_info,
         "business_information": business_info,
@@ -1474,3 +1658,13 @@ def extract_lead_information(html: str, text: str, url: str = "",
             "extraction_timestamp": None
         }
     }
+
+def main():
+    sections = [{'tag': 'p', 'text': 'TTC Portfolio of Brands', 'class': 'sisterbrands-collapsed__text text-label-legend', 'id': '', 'parent_tag': 'div'}, {'tag': 'a', 'text': 'Get a Quote', 'class': 'topbar__link text-link-xs', 'id': '', 'parent_tag': 'div'}, {'tag': 'a', 'text': 'Agents Login', 'class': 'topbar__link text-link-xs', 'id': '', 'parent_tag': 'div'}, {'tag': 'p', 'text': 'My Trafalgar', 'class': 'topbar__dropdown-text text-label-s', 'id': '', 'parent_tag': 'div'}, {'tag': 'p', 'text': 'Destinations', 'class': 'nav-item__button-text text-label-s', 'id': '', 'parent_tag': 'div'}, {'tag': 'p', 'text': 'Ways To Go', 'class': 'nav-item__button-text text-label-s', 'id': '', 'parent_tag': 'div'}, {'tag': 'p', 'text': 'About Us', 'class': 'nav-item__button-text text-label-s', 'id': '', 'parent_tag': 'div'}, {'tag': 'p', 'text': 'River Cruises', 'class': 'nav-item__button-text text-label-s', 'id': '', 'parent_tag': 'div'}, {'tag': 'a', 'text': '+91 22 26143300', 'class': 'navbar-contact__icon-link', 'id': '', 'parent_tag': 'div'}, {'tag': 'p', 'text': '+91 22 26143300', 'class': 'navbar-contact__phone navbar-contact__phone--big-size text-label-l', 'id': '', 'parent_tag': 'a'}, {'tag': 'p', 'text': 'Customers', 'class': 'text-link-xs', 'id': '', 'parent_tag': 'button'}, {'tag': 'a', 'text': 'Find Out More', 'class': 'btn btn--L hero-content__button btn-pr btn--icon-Left', 'id': '', 'parent_tag': 'div'}, {'tag': 'p', 'text': 'Find Out More', 'class': 'text-button-l', 'id': '', 'parent_tag': 'a'}, {'tag': 'a', 'text': 'TRAFALGAR IS RATED4.6 / 5BASED ON 130,000+ VERIFIED REVIEWS\xa0 |', 'class': 'banner-with-mask', 'id': '', 'parent_tag': 'div'}, {'tag': 'p', 'text': 'TRAFALGAR IS RATED4.6 / 5BASED ON 130,000+ VERIFIED REVIEWS\xa0 |', 'class': '', 'id': '', 'parent_tag': 'header'}, {'tag': 'h2', 'text': '2026 Price Drop Promise', 'class': 'image-tile-text-row__title no-subtitle rich-text text-h2-title-s', 'id': '', 'parent_tag': 'div'}, {'tag': 'h2', 'text': 'Off-season Bundles', 'class': 'image-tile-text-row__title no-subtitle rich-text text-h2-title-s', 'id': '', 'parent_tag': 'div'}, {'tag': 'h2', 'text': 'Last Minute Deals to Europe', 'class': 'image-tile-text-row__title no-subtitle rich-text text-h2-title-s', 'id': '', 'parent_tag': 'div'}, {'tag': 'p', 'text': 'Plus, other benefits for booking early**', 'class': '', 'id': '', 'parent_tag': 'div'}, {'tag': 'p', 'text': 'Land + air packages starting at $2,251* in partnership with United Airlines', 'class': '', 'id': '', 'parent_tag': 'div'}, {'tag': 'p', 'text': 'Act fast! Save on tours departing in the next 4 months', 'class': '', 'id': '', 'parent_tag': 'div'}, {'tag': 'a', 'text': 'See Deals', 'class': 'btn btn--L image-tile-buttons-row__button btn-pr btn--icon-Left', 'id': '', 'parent_tag': 'div'}, {'tag': 'p', 'text': 'See Deals', 'class': 'text-button-l', 'id': '', 'parent_tag': 'a'}, {'tag': 'a', 'text': 'See Bundles', 'class': 'btn btn--L image-tile-buttons-row__button btn-pr-inv btn--icon-Left', 'id': '', 'parent_tag': 'div'}, {'tag': 'p', 'text': 'See Bundles', 'class': 'text-button-l', 'id': '', 'parent_tag': 'a'}, {'tag': 'a', 'text': 'See Deals', 'class': 'btn btn--L image-tile-buttons-row__button btn-pr btn--icon-Left', 'id': '', 'parent_tag': 'div'}, {'tag': 'p', 'text': 'See Deals', 'class': 'text-button-l', 'id': '', 'parent_tag': 'a'}, {'tag': 'h2', 'text': 'Popular searches', 'class': 'title-section__title text-h2-title-s', 'id': '', 'parent_tag': 'header'}, {'tag': 'a', 'text': 'Domestic tripsSee America in a new light', 'class': 'tile__link-wrapper small-tile-row__content-tile', 'id': '', 'parent_tag': 'div'}, {'tag': 'p', 'text': 'Domestic trips', 'class': 'title-section__title text-h2-title-xxs', 'id': '', 'parent_tag': 'header'}, {'tag': 'p', 'text': 'See America in a new light', 'class': '', 'id': '', 'parent_tag': 'div'}, {'tag': 'a', 'text': 'Vacations under 14 daysLimited availability. Selling fast.', 'class': 'tile__link-wrapper small-tile-row__content-tile', 'id': '', 'parent_tag': 'div'}, {'tag': 'p', 'text': 'Vacations under 14 days', 'class': 'title-section__title text-h2-title-xxs', 'id': '', 'parent_tag': 'header'}, {'tag': 'p', 'text': 'Limited availability. Selling fast.', 'class': '', 'id': '', 'parent_tag': 'div'}, {'tag': 'a', 'text': "Today's best travel dealsSave now. Don't miss out.", 'class': 'tile__link-wrapper small-tile-row__content-tile', 'id': '', 'parent_tag': 'div'}, {'tag': 'p', 'text': "Today's best travel deals", 'class': 'title-section__title text-h2-title-xxs', 'id': '', 'parent_tag': 'header'}, {'tag': 'p', 'text': "Save now. Don't miss out.", 'class': '', 'id': '', 'parent_tag': 'div'}, {'tag': 'a', 'text': 'Offers for travel groups of 9+Save when you book 9+ guests', 'class': 'tile__link-wrapper small-tile-row__content-tile', 'id': '', 'parent_tag': 'div'}, {'tag': 'p', 'text': 'Offers for travel groups of 9+', 'class': 'title-section__title text-h2-title-xxs', 'id': '', 'parent_tag': 'header'}, {'tag': 'p', 'text': 'Save when you book 9+ guests', 'class': '', 'id': '', 'parent_tag': 'div'}, {'tag': 'a', 'text': 'Past guest benefitsSavings with Global Tour Rewards', 'class': 'tile__link-wrapper small-tile-row__content-tile', 'id': '', 'parent_tag': 'div'}, {'tag': 'p', 'text': 'Past guest benefits', 'class': 'title-section__title text-h2-title-xxs', 'id': '', 'parent_tag': 'header'}, {'tag': 'p', 'text': 'Savings with Global Tour Rewards', 'class': '', 'id': '', 'parent_tag': 'div'}, {'tag': 'a', 'text': 'Tours under $2000Browse our value vacations', 'class': 'tile__link-wrapper small-tile-row__content-tile', 'id': '', 'parent_tag': 'div'}, {'tag': 'p', 'text': 'Tours under $2000', 'class': 'title-section__title text-h2-title-xxs', 'id': '', 'parent_tag': 'header'}, {'tag': 'p', 'text': 'Browse our value vacations', 'class': '', 'id': '', 'parent_tag': 'div'}, {'tag': 'a', 'text': 'All Last Minute Deals', 'class': 'btn btn--L trip-cards-component__button btn-pr btn--icon-Left', 'id': '', 'parent_tag': 'div'}, {'tag': 'p', 'text': 'All Last Minute Deals', 'class': 'text-button-l', 'id': '', 'parent_tag': 'a'}, {'tag': 'h2', 'text': 'Looking for inspiration?', 'class': 'title-section__title text-h2-title-s', 'id': '', 'parent_tag': 'header'}, {'tag': 'a', 'text': 'Order or download your free brochure', 'class': 'remove-link-styles', 'id': '', 'parent_tag': 'div'}, {'tag': 'p', 'text': 'Order or download your free brochure', 'class': 'image-tile__title image-tile__title--clickable text-label-m', 'id': '', 'parent_tag': 'div'}, {'tag': 'a', 'text': '14 reasons why you should do a River Cruise in Germany and France in 2026', 'class': 'remove-link-styles', 'id': '', 'parent_tag': 'div'}, {'tag': 'p', 'text': '14 reasons why you should do a River Cruise in Germany and France in 2026', 'class': 'image-tile__title image-tile__title--clickable text-label-m', 'id': '', 'parent_tag': 'div'}, {'tag': 'a', 'text': '17 Useful Travel Tips for First-Time Tourers – From Real Trafalgar Guests', 'class': 'remove-link-styles', 'id': '', 'parent_tag': 'div'}, {'tag': 'p', 'text': '17 Useful Travel Tips for First-Time Tourers – From Real Trafalgar Guests', 'class': 'image-tile__title image-tile__title--clickable text-label-m', 'id': '', 'parent_tag': 'div'}, {'tag': 'a', 'text': '25 best things to do in Spain in 2026', 'class': 'remove-link-styles', 'id': '', 'parent_tag': 'div'}, {'tag': 'p', 'text': '25 best things to do in Spain in 2026', 'class': 'image-tile__title image-tile__title--clickable text-label-m', 'id': '', 'parent_tag': 'div'}, {'tag': 'a', 'text': 'Got questions? Find your answer in our popular FAQs >', 'class': 'remove-link-styles', 'id': '', 'parent_tag': 'div'}, {'tag': 'p', 'text': 'Got questions? Find your answer in our popular FAQs >', 'class': '', 'id': '', 'parent_tag': 'header'}, {'tag': 'a', 'text': 'See All Destinations', 'class': 'btn btn--L btn-sec-inv btn--icon-Left', 'id': '', 'parent_tag': 'div'}, {'tag': 'p', 'text': 'See All Destinations', 'class': 'text-button-l', 'id': '', 'parent_tag': 'a'}, {'tag': 'h2', 'text': 'Tour Differently.', 'class': 'title-section__title text-h2-title-m', 'id': '', 'parent_tag': 'header'}, {'tag': 'p', 'text': 'The ease. The experts. The icons. The locals. The hidden secrets. When it comes to your next vacation, nothing beats Trafalgar.', 'class': '', 'id': '', 'parent_tag': 'header'}, {'tag': 'h3', 'text': 'Must-sees to local secrets', 'class': 'title-section__title text-h2-title-xxs', 'id': '', 'parent_tag': 'header'}, {'tag': 'p', 'text': 'You’ll enjoy the icons and hidden gems with a Local Specialist by your side.', 'class': '', 'id': '', 'parent_tag': 'header'}, {'tag': 'a', 'text': 'Learn More', 'class': 'btn btn--L btn-sec btn--icon-Left', 'id': '', 'parent_tag': 'div'}, {'tag': 'p', 'text': 'Learn More', 'class': 'text-button-l', 'id': '', 'parent_tag': 'a'}, {'tag': 'h3', 'text': 'One-of-a-kind experiences', 'class': 'title-section__title text-h2-title-xxs', 'id': '', 'parent_tag': 'header'}, {'tag': 'p', 'text': 'Your exclusive Be My Guest and Stays with Stories experiences.', 'class': '', 'id': '', 'parent_tag': 'header'}, {'tag': 'a', 'text': 'Learn More', 'class': 'btn btn--L btn-sec btn--icon-Left', 'id': '', 'parent_tag': 'div'}, {'tag': 'p', 'text': 'Learn More', 'class': 'text-button-l', 'id': '', 'parent_tag': 'a'}, {'tag': 'h3', 'text': 'Everything taken care of', 'class': 'title-section__title text-h2-title-xxs', 'id': '', 'parent_tag': 'header'}, {'tag': 'p', 'text': 'Seamless travel from the moment you book your trip.', 'class': '', 'id': '', 'parent_tag': 'header'}, {'tag': 'a', 'text': 'Learn More', 'class': 'btn btn--L btn-sec btn--icon-Left', 'id': '', 'parent_tag': 'div'}, {'tag': 'p', 'text': 'Learn More', 'class': 'text-button-l', 'id': '', 'parent_tag': 'a'}, {'tag': 'h3', 'text': 'Responsible travel', 'class': 'title-section__title text-h2-title-xxs', 'id': '', 'parent_tag': 'header'}, {'tag': 'p', 'text': 'On every tour you’ll experience at least one MAKE TRAVEL MATTER® Experience.', 'class': '', 'id': '', 'parent_tag': 'header'}, {'tag': 'a', 'text': 'Learn More', 'class': 'btn btn--L btn-sec btn--icon-Left', 'id': '', 'parent_tag': 'div'}, {'tag': 'p', 'text': 'Learn More', 'class': 'text-button-l', 'id': '', 'parent_tag': 'a'}, {'tag': 'h2', 'text': 'Popular ways to go', 'class': 'title-section__title text-h2-title-s', 'id': '', 'parent_tag': 'header'}, {'tag': 'a', 'text': 'Family Tours', 'class': 'image_grid__card--clickable-link', 'id': '', 'parent_tag': 'div'}, {'tag': 'h2', 'text': 'Family Tours', 'class': 'image-grid__title text-h2-title-s', 'id': '', 'parent_tag': 'div'}, {'tag': 'a', 'text': 'Couples Getaways', 'class': 'image_grid__card--clickable-link', 'id': '', 'parent_tag': 'div'}, {'tag': 'h2', 'text': 'Couples Getaways', 'class': 'image-grid__title text-h2-title-s', 'id': '', 'parent_tag': 'div'}, {'tag': 'a', 'text': 'Last Minute Tours', 'class': 'image_grid__card--clickable-link', 'id': '', 'parent_tag': 'div'}, {'tag': 'h2', 'text': 'Last Minute Tours', 'class': 'image-grid__title text-h2-title-s', 'id': '', 'parent_tag': 'div'}, {'tag': 'a', 'text': 'Single Parent Tours', 'class': 'image_grid__card--clickable-link', 'id': '', 'parent_tag': 'div'}, {'tag': 'h2', 'text': 'Single Parent Tours', 'class': 'image-grid__title text-h2-title-s', 'id': '', 'parent_tag': 'div'}, {'tag': 'a', 'text': 'Food Travel', 'class': 'image_grid__card--clickable-link', 'id': '', 'parent_tag': 'div'}, {'tag': 'h2', 'text': 'Food Travel', 'class': 'image-grid__title text-h2-title-s', 'id': '', 'parent_tag': 'div'}, {'tag': 'a', 'text': 'Safari Tours', 'class': 'image_grid__card--clickable-link', 'id': '', 'parent_tag': 'div'}, {'tag': 'h2', 'text': 'Safari Tours', 'class': 'image-grid__title text-h2-title-s', 'id': '', 'parent_tag': 'div'}, {'tag': 'a', 'text': 'Sustainable Tours', 'class': 'image_grid__card--clickable-link', 'id': '', 'parent_tag': 'div'}, {'tag': 'h2', 'text': 'Sustainable Tours', 'class': 'image-grid__title text-h2-title-s', 'id': '', 'parent_tag': 'div'}, {'tag': 'a', 'text': 'Cruise Tours', 'class': 'image_grid__card--clickable-link', 'id': '', 'parent_tag': 'div'}, {'tag': 'h2', 'text': 'Cruise Tours', 'class': 'image-grid__title text-h2-title-s', 'id': '', 'parent_tag': 'div'}, {'tag': 'a', 'text': 'View All Ways to Go', 'class': 'btn btn--L image-grid__button btn-sec btn--icon-Left', 'id': '', 'parent_tag': 'div'}, {'tag': 'p', 'text': 'View All Ways to Go', 'class': 'text-button-l', 'id': '', 'parent_tag': 'a'}, {'tag': 'h2', 'text': 'See happy guests traveling now #simplyTrafalgar', 'class': 'title-section__title text-h2-title-s', 'id': '', 'parent_tag': 'header'}, {'tag': 'p', 'text': 'Join us on social for your daily dose of travel inspiration, and see what travelers around the world are up to right now. \u200b', 'class': '', 'id': '', 'parent_tag': 'header'}, {'tag': 'h2', 'text': 'We are the world’s most loved tour company', 'class': 'title-section__title text-h2-title-m', 'id': '', 'parent_tag': 'header'}, {'tag': 'p', 'text': 'Ready to be inspired?', 'class': 'title-section__title text-h2-title-xxs', 'id': '', 'parent_tag': 'header'}, {'tag': 'p', 'text': 'Get your free brochure and plan your next escape.', 'class': '', 'id': '', 'parent_tag': 'div'}, {'tag': 'a', 'text': 'Request a Brochure', 'class': 'btn btn--S tile__content-link tile__content-link-position--left btn-pr btn--icon-Left', 'id': '', 'parent_tag': 'div'}, {'tag': 'p', 'text': 'Request a Brochure', 'class': 'text-button-s', 'id': '', 'parent_tag': 'a'}, {'tag': 'p', 'text': '5 million happy guests...', 'class': 'title-section__title text-h2-title-xxs', 'id': '', 'parent_tag': 'header'}, {'tag': 'p', 'text': '...and counting. See what our past guests have to say.', 'class': '', 'id': '', 'parent_tag': 'div'}, {'tag': 'a', 'text': 'Read Reviews', 'class': 'btn btn--S tile__content-link tile__content-link-position--left btn-pr btn--icon-Left', 'id': '', 'parent_tag': 'div'}, {'tag': 'p', 'text': 'Read Reviews', 'class': 'text-button-s', 'id': '', 'parent_tag': 'a'}, {'tag': 'td', 'text': 'Members-only pricing5%* discount on guided tours', 'class': '', 'id': '', 'parent_tag': 'tr'}, {'tag': 'p', 'text': 'Members-only pricing5%* discount on guided tours', 'class': '', 'id': '', 'parent_tag': 'td'}, {'tag': 'span', 'text': 'Members-only pricing', 'class': '', 'id': '', 'parent_tag': 'p'}, {'tag': 'span', 'text': 'Members-only pricing', 'class': '', 'id': '', 'parent_tag': 'strong'}, {'tag': 'span', 'text': '5%* discount on guided tours', 'class': '', 'id': '', 'parent_tag': 'p'}, {'tag': 'td', 'text': "Priority first lookYou're the first to find out about new trips & offers", 'class': '', 'id': '', 'parent_tag': 'tr'}, {'tag': 'p', 'text': "Priority first lookYou're the first to find out about new trips & offers", 'class': '', 'id': '', 'parent_tag': 'td'}, {'tag': 'span', 'text': 'Priority first look', 'class': '', 'id': '', 'parent_tag': 'p'}, {'tag': 'span', 'text': "You're the first to find out about new trips & offers", 'class': '', 'id': '', 'parent_tag': 'p'}, {'tag': 'td', 'text': 'Special recognitionFrom your Travel Director on your next tour', 'class': '', 'id': '', 'parent_tag': 'tr'}, {'tag': 'p', 'text': 'Special recognitionFrom your Travel Director on your next tour', 'class': '', 'id': '', 'parent_tag': 'td'}, {'tag': 'span', 'text': 'Special recognition', 'class': '', 'id': '', 'parent_tag': 'p'}, {'tag': 'span', 'text': 'Special recognition', 'class': '', 'id': '', 'parent_tag': 'strong'}, {'tag': 'span', 'text': 'From your Travel Director on your next tour', 'class': '', 'id': '', 'parent_tag': 'p'}, {'tag': 'td', 'text': 'Access to our portfolio of brandsEnjoy your rewards across the portfolio', 'class': '', 'id': '', 'parent_tag': 'tr'}, {'tag': 'p', 'text': 'Access to our portfolio of brandsEnjoy your rewards across the portfolio', 'class': '', 'id': '', 'parent_tag': 'td'}, {'tag': 'span', 'text': 'Access to our portfolio of brands', 'class': '', 'id': '', 'parent_tag': 'p'}, {'tag': 'span', 'text': 'Enjoy your rewards across the portfolio', 'class': '', 'id': '', 'parent_tag': 'p'}, {'tag': 'td', 'text': 'Referral programGive discounts and get travel credits', 'class': '', 'id': '', 'parent_tag': 'tr'}, {'tag': 'p', 'text': 'Referral programGive discounts and get travel credits', 'class': '', 'id': '', 'parent_tag': 'td'}, {'tag': 'span', 'text': 'Referral programGive discounts and get travel credits', 'class': '', 'id': '', 'parent_tag': 'p'}, {'tag': 'span', 'text': 'Give discounts and get travel credits', 'class': '', 'id': '', 'parent_tag': 'span'}, {'tag': 'a', 'text': 'Find Out More', 'class': 'btn btn--L btn-pr btn--icon-Left', 'id': '', 'parent_tag': 'div'}, {'tag': 'p', 'text': 'Find Out More', 'class': 'text-button-l', 'id': '', 'parent_tag': 'a'}, {'tag': 'h2', 'text': 'As seen on', 'class': 'title-section__title text-h2-title-s', 'id': '', 'parent_tag': 'header'}, {'tag': 'p', 'text': 'Help & Info', 'class': 'footer__title footer__title--empty-link text-label-l', 'id': '', 'parent_tag': 'div'}, {'tag': 'li', 'text': 'Who We Are', 'class': '', 'id': '', 'parent_tag': 'ul'}, {'tag': 'a', 'text': 'Who We Are', 'class': 'btn btn--S footer__link btn-ter btn--icon-Left', 'id': '', 'parent_tag': 'li'}, {'tag': 'p', 'text': 'Who We Are', 'class': 'text-paragraph-xs', 'id': '', 'parent_tag': 'a'}, {'tag': 'li', 'text': 'WE MAKE TRAVEL MATTER®', 'class': '', 'id': '', 'parent_tag': 'ul'}, {'tag': 'a', 'text': 'WE MAKE TRAVEL MATTER®', 'class': 'btn btn--S footer__link btn-ter btn--icon-Left', 'id': '', 'parent_tag': 'li'}, {'tag': 'p', 'text': 'WE MAKE TRAVEL MATTER®', 'class': 'text-paragraph-xs', 'id': '', 'parent_tag': 'a'}, {'tag': 'li', 'text': 'Unedited Reviews', 'class': '', 'id': '', 'parent_tag': 'ul'}, {'tag': 'a', 'text': 'Unedited Reviews', 'class': 'btn btn--S footer__link btn-ter btn--icon-Left', 'id': '', 'parent_tag': 'li'}, {'tag': 'p', 'text': 'Unedited Reviews', 'class': 'text-paragraph-xs', 'id': '', 'parent_tag': 'a'}, {'tag': 'li', 'text': 'Affiliates Hub', 'class': '', 'id': '', 'parent_tag': 'ul'}, {'tag': 'a', 'text': 'Affiliates Hub', 'class': 'btn btn--S footer__link btn-ter btn--icon-Left', 'id': '', 'parent_tag': 'li'}, {'tag': 'p', 'text': 'Affiliates Hub', 'class': 'text-paragraph-xs', 'id': '', 'parent_tag': 'a'}, {'tag': 'li', 'text': 'Our Destination Management Companies', 'class': '', 'id': '', 'parent_tag': 'ul'}, {'tag': 'a', 'text': 'Our Destination Management Companies', 'class': 'btn btn--S footer__link btn-ter btn--icon-Left', 'id': '', 'parent_tag': 'li'}, {'tag': 'p', 'text': 'Our Destination Management Companies', 'class': 'text-paragraph-xs', 'id': '', 'parent_tag': 'a'}, {'tag': 'li', 'text': 'Frequently Asked Questions', 'class': '', 'id': '', 'parent_tag': 'ul'}, {'tag': 'a', 'text': 'Frequently Asked Questions', 'class': 'btn btn--S footer__link btn-ter btn--icon-Left', 'id': '', 'parent_tag': 'li'}, {'tag': 'p', 'text': 'Frequently Asked Questions', 'class': 'text-paragraph-xs', 'id': '', 'parent_tag': 'a'}, {'tag': 'li', 'text': 'Travel Updates', 'class': '', 'id': '', 'parent_tag': 'ul'}, {'tag': 'a', 'text': 'Travel Updates', 'class': 'btn btn--S footer__link btn-ter btn--icon-Left', 'id': '', 'parent_tag': 'li'}, {'tag': 'p', 'text': 'Travel Updates', 'class': 'text-paragraph-xs', 'id': '', 'parent_tag': 'a'}, {'tag': 'li', 'text': 'Contact Us', 'class': '', 'id': '', 'parent_tag': 'ul'}, {'tag': 'a', 'text': 'Contact Us', 'class': 'btn btn--S footer__link btn-ter btn--icon-Left', 'id': '', 'parent_tag': 'li'}, {'tag': 'p', 'text': 'Contact Us', 'class': 'text-paragraph-xs', 'id': '', 'parent_tag': 'a'}, {'tag': 'p', 'text': 'Travel Planning', 'class': 'footer__title footer__title--empty-link text-label-l', 'id': '', 'parent_tag': 'div'}, {'tag': 'li', 'text': 'Get Your Free Brochure', 'class': '', 'id': '', 'parent_tag': 'ul'}, {'tag': 'a', 'text': 'Get Your Free Brochure', 'class': 'btn btn--S footer__link btn-ter btn--icon-Left', 'id': '', 'parent_tag': 'li'}, {'tag': 'p', 'text': 'Get Your Free Brochure', 'class': 'text-paragraph-xs', 'id': '', 'parent_tag': 'a'}, {'tag': 'li', 'text': 'Travel Insurance', 'class': '', 'id': '', 'parent_tag': 'ul'}, {'tag': 'a', 'text': 'Travel Insurance', 'class': 'btn btn--S footer__link btn-ter btn--icon-Left', 'id': '', 'parent_tag': 'li'}, {'tag': 'p', 'text': 'Travel Insurance', 'class': 'text-paragraph-xs', 'id': '', 'parent_tag': 'a'}, {'tag': 'li', 'text': 'Booking Conditions', 'class': '', 'id': '', 'parent_tag': 'ul'}, {'tag': 'a', 'text': 'Booking Conditions', 'class': 'btn btn--S footer__link btn-ter btn--icon-Left', 'id': '', 'parent_tag': 'li'}, {'tag': 'p', 'text': 'Booking Conditions', 'class': 'text-paragraph-xs', 'id': '', 'parent_tag': 'a'}, {'tag': 'li', 'text': 'Trip Deposit Level', 'class': '', 'id': '', 'parent_tag': 'ul'}, {'tag': 'a', 'text': 'Trip Deposit Level', 'class': 'btn btn--S footer__link btn-ter btn--icon-Left', 'id': '', 'parent_tag': 'li'}, {'tag': 'p', 'text': 'Trip Deposit Level', 'class': 'text-paragraph-xs', 'id': '', 'parent_tag': 'a'}, {'tag': 'li', 'text': 'Recommendations', 'class': '', 'id': '', 'parent_tag': 'ul'}, {'tag': 'a', 'text': 'Recommendations', 'class': 'btn btn--S footer__link btn-ter btn--icon-Left', 'id': '', 'parent_tag': 'li'}, {'tag': 'p', 'text': 'Recommendations', 'class': 'text-paragraph-xs', 'id': '', 'parent_tag': 'a'}, {'tag': 'p', 'text': 'Trafalgar Tours Limited is a proud member ofThe Travel Corporationportfolio of brands..', 'class': '', 'id': '', 'parent_tag': 'div'}, {'tag': 'a', 'text': 'The Travel Corporation', 'class': '', 'id': '', 'parent_tag': 'p'}, {'tag': 'p', 'text': '#SimplyTrafalgar', 'class': '', 'id': '', 'parent_tag': 'div'}, {'tag': 'p', 'text': 'Travel House, Rue du Manoir St Peter Port, Guernsey, GY1 2JH', 'class': '', 'id': '', 'parent_tag': 'div'}, {'tag': 'p', 'text': 'Selected Region', 'class': 'regional-selector__row-region text-paragraph-xs', 'id': '', 'parent_tag': 'div'}, {'tag': 'p', 'text': 'United States', 'class': 'text-label-m', 'id': '', 'parent_tag': 'div'}, {'tag': 'p', 'text': 'Selected Region', 'class': 'regional-selector-mobile__region-title text-paragraph-xs', 'id': '', 'parent_tag': 'div'}, {'tag': 'p', 'text': 'United States', 'class': 'regional-selector-mobile__row__selected text-label-m', 'id': '', 'parent_tag': 'div'}, {'tag': 'a', 'text': 'United Kingdom', 'class': '', 'id': '', 'parent_tag': 'div'}, {'tag': 'p', 'text': 'United Kingdom', 'class': 'regional-selector-mobile__links__text text-default', 'id': '', 'parent_tag': 'a'}, {'tag': 'a', 'text': 'Australia', 'class': '', 'id': '', 'parent_tag': 'div'}, {'tag': 'p', 'text': 'Australia', 'class': 'regional-selector-mobile__links__text text-default', 'id': '', 'parent_tag': 'a'}, {'tag': 'a', 'text': 'New Zealand', 'class': '', 'id': '', 'parent_tag': 'div'}, {'tag': 'p', 'text': 'New Zealand', 'class': 'regional-selector-mobile__links__text text-default', 'id': '', 'parent_tag': 'a'}, {'tag': 'a', 'text': 'South Africa', 'class': '', 'id': '', 'parent_tag': 'div'}, {'tag': 'p', 'text': 'South Africa', 'class': 'regional-selector-mobile__links__text text-default', 'id': '', 'parent_tag': 'a'}, {'tag': 'p', 'text': 'Copyright 2025 Trafalgar. All rights reserved.MAKE TRAVEL MATTER® is a trademark of The TreadRight Foundation, registered in the U.S. and other countries and regions, and is being used under license.', 'class': '', 'id': '', 'parent_tag': 'div'}, {'tag': 'a', 'text': 'Terms and Conditions', 'class': 'btn btn--L sub-links__link btn-ter btn--icon-Left', 'id': '', 'parent_tag': 'div'}, {'tag': 'p', 'text': 'Terms and Conditions', 'class': 'text-link-xs', 'id': '', 'parent_tag': 'a'}, {'tag': 'a', 'text': 'Booking Conditions', 'class': 'btn btn--L sub-links__link btn-ter btn--icon-Left', 'id': '', 'parent_tag': 'div'}, {'tag': 'p', 'text': 'Booking Conditions', 'class': 'text-link-xs', 'id': '', 'parent_tag': 'a'}, {'tag': 'a', 'text': 'Privacy Policy', 'class': 'btn btn--L sub-links__link btn-ter btn--icon-Left', 'id': '', 'parent_tag': 'div'}, {'tag': 'p', 'text': 'Privacy Policy', 'class': 'text-link-xs', 'id': '', 'parent_tag': 'a'}, {'tag': 'a', 'text': 'Cookie Policy', 'class': 'btn btn--L sub-links__link btn-ter btn--icon-Left', 'id': '', 'parent_tag': 'div'}, {'tag': 'p', 'text': 'Cookie Policy', 'class': 'text-link-xs', 'id': '', 'parent_tag': 'a'}]
+
+    contact_extractor = ContactExtractor()
+    ai_lead_info = _analyze_sections_for_client_info(sections, contact_extractor)
+    print(ai_lead_info)
+
+if __name__ == "__main__":
+    main()

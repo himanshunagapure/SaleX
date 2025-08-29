@@ -110,7 +110,7 @@ def run_sample_test():
     """
     # Sample URLs for testing (mix of different types)
     sample_urls = [
-        "https://www.narcity.com/i-recently-travelled-from-canada-to-us"
+        "https://www.cvent.com/"
     ]
     
     print("Running sample test with predefined URLs...")
