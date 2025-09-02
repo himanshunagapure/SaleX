@@ -81,11 +81,20 @@ class YouTubeScraperInterface:
             # Save to MongoDB if enabled
             if self.use_mongodb:
                 try:
+                    # Save to original YouTube collection
                     mongodb_stats = self.mongodb_manager.insert_batch_leads([data], 'youtube')
-                    print(f"✅ Successfully scraped and saved to MongoDB:")
+                    print(f"✅ Successfully scraped and saved to MongoDB (youtube_leads):")
                     print(f"   - Successfully inserted: {mongodb_stats['success_count']}")
                     print(f"   - Duplicates skipped: {mongodb_stats['duplicate_count']}")
                     print(f"   - Failed insertions: {mongodb_stats['failure_count']}")
+                    
+                    # Also save to unified collection
+                    unified_stats = self.mongodb_manager.insert_and_transform_to_unified([data], 'youtube')
+                    print(f"✅ Results also saved to unified_leads collection:")
+                    print(f"   - Successfully transformed & inserted: {unified_stats['success_count']}")
+                    print(f"   - Duplicates skipped: {unified_stats['duplicate_count']}")
+                    print(f"   - Failed transformations: {unified_stats['failure_count']}")
+                    
                 except Exception as e:
                     print(f"❌ Error saving to MongoDB: {e}")
             
@@ -144,6 +153,13 @@ class YouTubeScraperInterface:
                     print(f"   - Successfully inserted: {mongodb_stats['success_count']}")
                     print(f"   - Duplicates skipped: {mongodb_stats['duplicate_count']}")
                     print(f"   - Failed insertions: {mongodb_stats['failure_count']}")
+
+                    # Also save to unified collection
+                    unified_stats = self.mongodb_manager.insert_and_transform_to_unified(final_output, 'youtube')
+                    print(f"✅ Results also saved to unified_leads collection:")
+                    print(f"   - Successfully transformed & inserted: {unified_stats['success_count']}")
+                    print(f"   - Duplicates skipped: {unified_stats['duplicate_count']}")
+                    print(f"   - Failed transformations: {unified_stats['failure_count']}")
                 except Exception as e:
                     print(f"❌ Error saving to MongoDB: {e}")
             

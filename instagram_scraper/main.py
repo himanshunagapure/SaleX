@@ -278,13 +278,23 @@ class InstagramScraper:
             
             # Save to MongoDB if enabled
             mongodb_stats = None
+            unified_stats = None
             if self.use_mongodb and all_extracted_data:
                 try:
+                    # Save to original Instagram collection
                     mongodb_stats = self.mongodb_manager.insert_batch_leads(all_extracted_data, 'instagram')
-                    print(f"\n💾 Results saved to MongoDB:")
+                    print(f"\n💾 Results saved to MongoDB (instagram_leads):")
                     print(f"   - Successfully inserted: {mongodb_stats['success_count']}")
                     print(f"   - Duplicates skipped: {mongodb_stats['duplicate_count']}")
                     print(f"   - Failed insertions: {mongodb_stats['failure_count']}")
+                    
+                    # Also save to unified collection
+                    unified_stats = self.mongodb_manager.insert_and_transform_to_unified(all_extracted_data, 'instagram')
+                    print(f"\n💾 Results also saved to unified_leads collection:")
+                    print(f"   - Successfully transformed & inserted: {unified_stats['success_count']}")
+                    print(f"   - Duplicates skipped: {unified_stats['duplicate_count']}")
+                    print(f"   - Failed transformations: {unified_stats['failure_count']}")
+                    
                 except Exception as e:
                     print(f"❌ Error saving to MongoDB: {e}")
             
@@ -354,6 +364,7 @@ class InstagramScraper:
                 'errors': errors,
                 'output_file': output_file_path,
                 'mongodb_stats': mongodb_stats,
+                'unified_stats': unified_stats,
                 'stealth_report': final_stealth_report
             }
             
@@ -461,7 +472,7 @@ async def main():
     ]
     
     print("Example URLs:")
-    for i, url in enumerate(example_urls, 1):
+    for i, url in enumerate(example_urls, 1):  # Show first 5 entries
         content_type = "profile" if "/p/" not in url and "/reel/" not in url else ("video" if "/reel/" in url else "article")
         print(f"  {i}. {url} ({content_type})")
     

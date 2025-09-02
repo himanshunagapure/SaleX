@@ -347,7 +347,6 @@ class WebScraperOrchestrator:
                     }
                     logger.debug(f"Filtered {len(filtered_ai_lead_info)} sections + structured data for AI analysis")
 
-                    
                     # Phase 4: AI extraction from filtered sections + structured data
                     if filtered_ai_lead_info or lead_info.get("structured_data_summary"):
                         ai_extracted_data = extract_client_info_from_sections(ai_input_data, url) 
@@ -831,9 +830,7 @@ class WebScraperOrchestrator:
                     logger.info(f"Final leads generated: {final_leads_file} with {len(final_leads)} leads")
             except Exception as e:
                 logger.error(f"Final leads generation failed: {e}")
-        print("="*20)
-        print(final_leads)
-        print("="*20)
+
         # Save to MongoDB if enabled
         if self.use_mongodb:
             try:

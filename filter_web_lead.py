@@ -5,13 +5,19 @@ from pymongo import MongoClient
 from pymongo.errors import PyMongoError
 import logging
 from bson import ObjectId
+import sys
+
+# Add parent directory to path to import database module
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+from database.mongodb_manager import get_mongodb_manager
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 class MongoDBLeadProcessor:
-    def __init__(self, mongodb_uri: str = None, database_name: str = None):
+    def __init__(self, mongodb_uri: str = None, database_name: str = None, mongodb_manager=None):
         """
         Initialize MongoDB connection
         """
@@ -19,6 +25,10 @@ class MongoDBLeadProcessor:
         self.database_name = database_name or os.getenv('MONGODB_DATABASE_NAME', 'lead_generation_db')
         self.source_collection = os.getenv('MONGODB_COLLECTION', 'web_leads')
         self.target_collection = 'leadgen_leads'
+        self.unified_leads_collection = 'unified_leads'
+        
+        # Store the unified mongodb_manager if provided
+        self.mongodb_manager = mongodb_manager
         
         try:
             self.client = MongoClient(self.mongodb_uri)
@@ -26,6 +36,16 @@ class MongoDBLeadProcessor:
             # Test connection
             self.client.admin.command('ismaster')
             logger.info(f"Connected to MongoDB: {self.database_name}")
+            
+            # Initialize unified MongoDB manager if not provided
+            if not self.mongodb_manager:
+                try:
+                    self.mongodb_manager = get_mongodb_manager()
+                    logger.info("✅ Unified MongoDB manager initialized")
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to initialize unified MongoDB manager: {e}")
+                    self.mongodb_manager = None
+                
         except PyMongoError as e:
             logger.error(f"Failed to connect to MongoDB: {str(e)}")
             raise
@@ -438,6 +458,7 @@ class MongoDBLeadProcessor:
             email_based_count = 0
             phone_based_count = 0
             batch_leads = []
+            unified_batch = []  # For unified leads processing
             
             # Process in batches
             for skip in range(0, total_count, batch_size):
@@ -454,7 +475,7 @@ class MongoDBLeadProcessor:
                         
                         filtered_count += 1
                         
-                        # Step 2: Extract data from filtered lead
+                        # Step 2: Extract data from filtered lead for leadgen_leads collection
                         extracted = self.extract_lead_data(web_lead)
                         
                         # Step 3: Check for duplicates and filter out leads with less information
@@ -474,6 +495,10 @@ class MongoDBLeadProcessor:
                         
                         batch_leads.extend(valid_extracted)
                         
+                        # Step 4: Add to unified batch if we have the mongodb_manager
+                        if self.mongodb_manager and self.has_email_or_phone(web_lead):
+                            unified_batch.append(web_lead)
+                        
                     except Exception as e:
                         logger.warning(f"Error processing lead {web_lead.get('_id', 'unknown')}: {str(e)}")
                         continue
@@ -487,6 +512,19 @@ class MongoDBLeadProcessor:
                         batch_leads = []  # Clear batch
                     except Exception as e:
                         logger.error(f"Error inserting batch: {str(e)}")
+                
+                # Process unified batch
+                if unified_batch and (len(unified_batch) >= batch_size or skip + batch_size >= total_count):
+                    try:
+                        if self.mongodb_manager:
+                            unified_stats = self.mongodb_manager.insert_and_transform_to_unified(unified_batch, 'web')
+                            logger.info(f"✅ Unified leads batch processed:")
+                            logger.info(f"   - Successfully transformed & inserted: {unified_stats['success_count']}")
+                            logger.info(f"   - Duplicates skipped: {unified_stats['duplicate_count']}")
+                            logger.info(f"   - Failed transformations: {unified_stats['failure_count']}")
+                        unified_batch = []  # Clear unified batch
+                    except Exception as e:
+                        logger.error(f"Error processing unified batch: {str(e)}")
             
             # Insert any remaining leads
             if batch_leads:
@@ -496,6 +534,17 @@ class MongoDBLeadProcessor:
                     logger.info(f"Inserted final {len(result.inserted_ids)} leads to {self.target_collection}")
                 except Exception as e:
                     logger.error(f"Error inserting final batch: {str(e)}")
+            
+            # Process any remaining unified batch
+            if unified_batch and self.mongodb_manager:
+                try:
+                    unified_stats = self.mongodb_manager.insert_and_transform_to_unified(unified_batch, 'web')
+                    logger.info(f"✅ Final unified leads batch processed:")
+                    logger.info(f"   - Successfully transformed & inserted: {unified_stats['success_count']}")
+                    logger.info(f"   - Duplicates skipped: {unified_stats['duplicate_count']}")
+                    logger.info(f"   - Failed transformations: {unified_stats['failure_count']}")
+                except Exception as e:
+                    logger.error(f"Error processing final unified batch: {str(e)}")
             
             stats = {
                 'total': total_count,

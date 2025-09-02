@@ -426,13 +426,23 @@ class LinkedInScraperMain:
         
         # Save to MongoDB if enabled
         mongodb_stats = None
+        unified_stats = None
         if self.use_mongodb and results.get("scraped_data"):
             try:
+                # Save to original LinkedIn collection
                 mongodb_stats = self.mongodb_manager.insert_batch_leads(results["scraped_data"], 'linkedin')
-                print(f"\n💾 Results saved to MongoDB:")
+                print(f"\n💾 Results saved to MongoDB (linkedin_leads):")
                 print(f"   - Successfully inserted: {mongodb_stats['success_count']}")
                 print(f"   - Duplicates skipped: {mongodb_stats['duplicate_count']}")
                 print(f"   - Failed insertions: {mongodb_stats['failure_count']}")
+                
+                # Also save to unified collection
+                unified_stats = self.mongodb_manager.insert_and_transform_to_unified(results["scraped_data"], 'linkedin')
+                print(f"\n💾 Results also saved to unified_leads collection:")
+                print(f"   - Successfully transformed & inserted: {unified_stats['success_count']}")
+                print(f"   - Duplicates skipped: {unified_stats['duplicate_count']}")
+                print(f"   - Failed transformations: {unified_stats['failure_count']}")
+                
             except Exception as e:
                 print(f"❌ Error saving to MongoDB: {e}")
         
@@ -450,6 +460,8 @@ class LinkedInScraperMain:
         # Add MongoDB stats to results
         if mongodb_stats:
             results['mongodb_stats'] = mongodb_stats
+        if unified_stats:
+            results['unified_stats'] = unified_stats
     
     def _print_summary(self, results: Dict[str, Any]) -> None:
         """Print scraping summary"""

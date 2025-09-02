@@ -29,7 +29,9 @@ async def example_2_multiple_urls():
     # ]
 
     urls = [
-        "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        "https://www.youtube.com/shorts/YIe4jPsvv5g",
+        "https://www.youtube.com/@stillwatchingnetflix"
     ]
     
     # 1 line to scrape multiple URLs
