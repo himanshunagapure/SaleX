@@ -216,7 +216,13 @@ class AdvancedGraphQLExtractor:
             # 7. Analyze network requests
             network_analysis = await self._analyze_network_requests()
             extracted_data['network_analysis'] = network_analysis
-            
+            print("=" * 50)
+            print("\n Extracted Data graphql_data: ", extracted_data.get('graphql_data'))
+            print("\n Extracted Data api_data: ", extracted_data.get('api_data'))
+            print("\n Extracted Data user_data: ", extracted_data.get('user_data'))
+            print("\n Extracted Data meta_data: ", extracted_data.get('meta_data'))
+            print("\n Extracted Data script_data: ", extracted_data.get('script_data'))
+            print("=" * 50)
             return extracted_data
             
         except Exception as e:

@@ -22,6 +22,7 @@ import re
 import sys
 import os
 from typing import List, Dict, Any, Optional
+import random
 
 # Add parent directory to path to import database module
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -48,6 +49,85 @@ class LinkedInScraperMain:
                 print(f"⚠️ Failed to initialize MongoDB: {e}")
                 self.use_mongodb = False
     
+    def _is_signup_data(self, structured_data: Dict[str, Any]) -> bool:
+        """Detect if scraped data is from a sign-up page"""
+        if not structured_data:
+            return False
+        
+        # Check for common sign-up indicators
+        signup_indicators = [
+            "sign up", "signup", "join linkedin", "create account",
+            "register", "get started", "welcome to linkedin"
+        ]
+        
+        # Normalize fields
+        def normalize(value: Any) -> str:
+            """Convert value to lowercase string, handle lists gracefully"""
+            if isinstance(value, list):
+                return " ".join([str(v).lower().strip() for v in value])
+            elif isinstance(value, str):
+                return value.lower().strip()
+            return ""
+            
+        full_name = normalize(structured_data.get('full_name', ''))
+        job_title = normalize(structured_data.get('job_title', ''))
+        title = normalize(structured_data.get('title', ''))
+        about = normalize(structured_data.get('about', ''))
+        
+        # Check if any field contains signup indicators
+        fields_to_check = [full_name, job_title, title, about]
+        
+        for field in fields_to_check:
+            if field:
+                for indicator in signup_indicators:
+                    if indicator in field:
+                        return True
+        
+        # Additional checks for specific patterns
+        if full_name == "sign up" or job_title == "linkedin":
+            return True
+        
+        # Check if about contains LinkedIn's default signup description
+        if "750 million+ members" in about and "manage your professional identity" in about:
+            return True
+        
+        return False
+    
+    async def _retry_with_enhanced_anti_detection(self, url: str) -> Optional[Dict[str, Any]]:
+        """Retry scraping with enhanced anti-detection measures"""
+        print(f"🔄 Retrying with enhanced anti-detection: {url}")
+        
+        try:
+            # Create new extractor with enhanced settings for retry
+            enhanced_extractor = LinkedInDataExtractor(
+                headless=self.headless, 
+                enable_anti_detection=True,
+                # Enhanced anti-detection settings
+                is_mobile=True,  # Try mobile user agent
+            )
+            
+            await enhanced_extractor.start()
+            
+            # Add random delay before retry
+            await asyncio.sleep(random.uniform(2.0, 4.0))
+            
+            # Extract data with enhanced settings
+            raw_data = await enhanced_extractor.extract_linkedin_data(url)
+            
+            if raw_data.get('error'):
+                print(f"❌ Enhanced retry failed: {raw_data['error']}")
+                return None
+            
+            # Structure the data
+            structured_data = self._structure_linkedin_data(raw_data)
+            
+            await enhanced_extractor.stop()
+            return structured_data
+        
+        except Exception as e:
+            print(f"❌ Enhanced retry error for {url}: {str(e)}")
+            return None
+
     async def scrape_async(self, urls: List[str], output_filename: str = "linkedin_scraped_data.json") -> Dict[str, Any]:
         """Async method to scrape LinkedIn URLs"""
         
@@ -71,9 +151,14 @@ class LinkedInScraperMain:
                 "total_urls": len(urls),
                 "successful_scrapes": 0,
                 "failed_scrapes": 0,
+                "signup_pages_detected": 0,
+                "signup_pages_retried": 0,
+                "signup_pages_skipped": 0,
                 "scraper_version": "linkedin_scraper_main_v1.0"
             },
             "scraped_data": [],
+            "signup_urls_flagged": [],  # Track signup URLs for retry
+            "signup_urls_skipped": [],   # Track URLs skipped after retry
             "failed_urls": []
         }
         
@@ -86,6 +171,15 @@ class LinkedInScraperMain:
                 print(f"🔍 SCRAPING {i}/{len(urls)}: {url}")
                 print(f"{'='*60}")
                 
+                # PRE-CHECK: Detect URL type before processing
+                url_type = self.extractor.browser_manager.detect_url_type(url)
+                print(f"📋 Detected URL type: {url_type}")
+                
+                # SKIP unknown URLs
+                if url_type == 'unknown':
+                    print(f"⚠️  SKIPPING unknown URL type: {url}")
+                    continue
+
                 try:
                     # Extract raw data
                     raw_data = await self.extractor.extract_linkedin_data(url)
@@ -103,9 +197,18 @@ class LinkedInScraperMain:
                     structured_data = self._structure_linkedin_data(raw_data)
                     
                     if structured_data:
-                        results["scraped_data"].append(structured_data)
-                        results["scraping_metadata"]["successful_scrapes"] += 1
-                        print(f"✅ Successfully scraped: {structured_data.get('full_name', 'Unknown')}")
+                        # Check if this is sign-up data
+                        if self._is_signup_data(structured_data):
+                            print(f"🚫 SIGN-UP PAGE DETECTED: {url}")
+                            results["signup_urls_flagged"].append({
+                                "url": url,
+                                "detected_data": structured_data
+                            })
+                            results["scraping_metadata"]["signup_pages_detected"] += 1
+                        else:
+                            results["scraped_data"].append(structured_data)
+                            results["scraping_metadata"]["successful_scrapes"] += 1
+                            print(f"✅ Successfully scraped: {structured_data.get('full_name', 'Unknown')}")
                     else:
                         print(f"❌ Failed to structure data for {url}")
                         results["failed_urls"].append({
@@ -125,6 +228,64 @@ class LinkedInScraperMain:
                 # Brief pause between requests
                 await asyncio.sleep(2)
             
+            # Phase 2: Retry sign-up flagged URLs with enhanced anti-detection
+            if results["signup_urls_flagged"]:
+                print("\n" + "="*60)
+                print("🔄 PHASE 2: RETRYING SIGN-UP FLAGGED URLs")
+                print("="*60)
+                print(f"📊 Found {len(results['signup_urls_flagged'])} sign-up pages to retry")
+                
+                for i, signup_item in enumerate(results["signup_urls_flagged"], 1):
+                    url = signup_item["url"]
+                    print(f"\n🔄 RETRY {i}/{len(results['signup_urls_flagged'])}: {url}")
+                    
+                    try:
+                        retry_data = await self._retry_with_enhanced_anti_detection(url)
+                        results["scraping_metadata"]["signup_pages_retried"] += 1
+                        
+                        if retry_data and not self._is_signup_data(retry_data):
+                            # Success! Got real data
+                            results["scraped_data"].append(retry_data)
+                            results["scraping_metadata"]["successful_scrapes"] += 1
+                            print(f"✅ RETRY SUCCESS: {retry_data.get('full_name', 'Unknown')}")
+                        else:
+                            # Still sign-up data or failed, skip it
+                            print(f"🚫 RETRY FAILED - Still sign-up data, skipping: {url}")
+                            results["signup_urls_skipped"].append({
+                                "url": url,
+                                "reason": "Still shows sign-up page after retry"
+                            })
+                            results["scraping_metadata"]["signup_pages_skipped"] += 1
+                    
+                    except Exception as e:
+                        print(f"❌ RETRY ERROR for {url}: {str(e)}")
+                        results["signup_urls_skipped"].append({
+                            "url": url,
+                            "reason": f"Retry error: {str(e)}"
+                        })
+                        results["scraping_metadata"]["signup_pages_skipped"] += 1
+                    
+                    # Longer pause between retries
+                    await asyncio.sleep(random.uniform(2.0, 5.0))
+
+            # Phase 3: Filter out sign-up data and save results
+            print("\n" + "="*60)
+            print("💾 PHASE 3: FILTERING AND SAVING RESULTS")
+            print("="*60)
+            
+            # Final filter to ensure no sign-up data gets through
+            filtered_data = []
+            for item in results["scraped_data"]:
+                if not self._is_signup_data(item):
+                    filtered_data.append(item)
+                else:
+                    print(f"🚫 FINAL FILTER: Removing sign-up data for {item.get('url', 'Unknown URL')}")
+            
+            results["scraped_data"] = filtered_data
+            
+            # Update final counts
+            results["scraping_metadata"]["successful_scrapes"] = len(filtered_data)
+
             # Save results to file
             self._save_results_to_file(results, output_filename)
             
@@ -162,7 +323,15 @@ class LinkedInScraperMain:
             "scraping_timestamp": time.time(),
             "scraping_date": time.strftime("%Y-%m-%d %H:%M:%S")
         }
-        
+        # print("="*100)
+        # print(f"Combined Data: {combined_data}")
+        # print("="*100)
+        # print(f"JSON-LD Data: {json_ld_data}")
+        # print("="*100)
+        # print(f"Meta Data: {meta_data}")
+        # print("="*100)
+        # print(f"URL: {url}")
+        # print("="*100)
         # Structure data based on URL type
         if url_type == "profile":
             structured.update(self._structure_profile_data(combined_data, json_ld_data, meta_data, url))
@@ -445,7 +614,8 @@ class LinkedInScraperMain:
                 
             except Exception as e:
                 print(f"❌ Error saving to MongoDB: {e}")
-        
+        elif self.use_mongodb and not clean_scraped_data:
+            print("\n⚠️ No clean data to save to MongoDB (all data was sign-up pages)")
         # Save to file as backup
         try:
             with open(filename, 'w', encoding='utf-8') as f:
@@ -469,6 +639,9 @@ class LinkedInScraperMain:
         metadata = results.get("scraping_metadata", {})
         successful = metadata.get("successful_scrapes", 0)
         failed = metadata.get("failed_scrapes", 0)
+        signup_detected = metadata.get("signup_pages_detected", 0)
+        signup_retried = metadata.get("signup_pages_retried", 0)
+        signup_skipped = metadata.get("signup_pages_skipped", 0)
         total = metadata.get("total_urls", 0)
         
         print(f"\n{'='*80}")
@@ -476,6 +649,9 @@ class LinkedInScraperMain:
         print(f"{'='*80}")
         print(f"✅ Successful: {successful}/{total} ({successful/total*100 if total > 0 else 0:.1f}%)")
         print(f"❌ Failed: {failed}/{total} ({failed/total*100 if total > 0 else 0:.1f}%)")
+        print(f"🚫 Sign-up pages detected: {signup_detected}")
+        print(f"🔄 Sign-up pages retried: {signup_retried}")
+        print(f"⏭️ Sign-up pages skipped: {signup_skipped}")
         
         if results.get("scraped_data"):
             print(f"\n📊 Successfully scraped:")
@@ -489,6 +665,10 @@ class LinkedInScraperMain:
             for item in results["failed_urls"]:
                 print(f"  ✗ {item['url']}: {item['error']}")
         
+        if results.get("signup_urls_skipped"):
+            print(f"\n🚫 Sign-up URLs skipped after retry:")
+            for item in results["signup_urls_skipped"]:
+                print(f"  ⏭️ {item['url']}: {item['reason']}")
         print(f"{'='*80}")
 
 
@@ -571,17 +751,22 @@ class LinkedInScraper:
 if __name__ == "__main__":
     # Example usage
     # test_urls = [
-    #     "https://www.linkedin.com/in/williamhgates/",
-    #     "https://www.linkedin.com/company/microsoft/",
-    #     "https://www.linkedin.com/posts/aiqod_inside-aiqod-how-were-building-enterprise-ready-activity-7348224698146541568-N7oQ",
-    #     "https://www.linkedin.com/newsletters/aiqod-insider-7325820451622940672"
+    #     "https://www.linkedin.com/in/williamhgates/", #Profile URL Type
+    #     "https://www.linkedin.com/company/microsoft/", #Company URL Type
+    #     "https://www.linkedin.com/newsletters/aiqod-insider-7325820451622940672", #Newsletter URL type
+    #     "https://www.linkedin.com/pulse/10-offbeat-destinations-india-corporate…", #Unknown URL type
+    #     "https://careers.linkedin.com/", #Unknown URL type
+    #     "https://www.linkedin.com/legal/user-agreement", #Unknown URL type
+    #     "https://economicgraph.linkedin.com/workforce-data", #Unknown URL type
+        #     "https://www.linkedin.com/posts/mehar-labana_the-empowered-coach-retreat-2024-is-here-activity-7255548691091005440-Zcoi", #Post URL type '@type': 'VideoObject'
+        # "https://www.linkedin.com/posts/manojsatishkumar_below-is-my-experience-booking-a-trip-to-activity-7090924640289632256-jgSc", #Post URL type @type': 'DiscussionForumPosting'
+        # "https://www.linkedin.com/posts/harishbali_ep-5-nusa-penida-island-bali-everything-activity-7200356196912963584-V8mV" #Post URL type '@type': 'DiscussionForumPosting'
     # ]
     test_urls = [
-        "https://www.linkedin.com/in/williamhgates/"
+"https://in.linkedin.com/in/manoj-chauhan-02238323",
+"https://www.linkedin.com/in/atousasalehi",
+"https://ie.linkedin.com/in/rossmmccarthy"        
     ]
-    # test_urls = [
-    #     "https://www.linkedin.com/company/microsoft/"
-    # ]
     print("Testing LinkedIn Scraper...")
     print("Method 1: Function approach")
     results = linkedin_scraper(test_urls, "linkedin_scraper/test_results.json", headless=False)

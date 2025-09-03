@@ -202,7 +202,7 @@ class AdvancedYouTubeExtractor:
             elif page_type == 'shorts':
                 await asyncio.sleep(7)  # Shorts need a bit more time to load
             else:
-                await asyncio.sleep(5)
+                await asyncio.sleep(3)
             
             # Wait additional time for network requests to complete
             additional_wait = 10 if page_type == 'channel' else 8

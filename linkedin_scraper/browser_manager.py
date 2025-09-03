@@ -21,7 +21,7 @@ class BrowserManager:
         self.headless = headless
         self.enable_anti_detection = enable_anti_detection
         self.is_mobile = is_mobile
-        self.platform = platform.lower()  # "instagram" or "linkedin"
+        self.platform = platform.lower()  
         self.browser: Optional[Browser] = None
         self.context: Optional[BrowserContext] = None
         self.page: Optional[Page] = None
@@ -131,7 +131,7 @@ class BrowserManager:
         if hasattr(self, 'playwright'):
             await self.playwright.stop()
             
-    async def navigate_to(self, url: str, wait_time: int = 3) -> None:
+    async def navigate_to(self, url: str, wait_time: int =3) -> None:
         """Navigate to URL with human-like delays and anti-detection measures"""
         if not self.page:
             raise RuntimeError("Browser not started. Call start() first.")

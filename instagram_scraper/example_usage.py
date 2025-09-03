@@ -95,13 +95,17 @@ async def example_4_batch_processing():
     print("=" * 60)
     
     # Large batch of URLs
+    # urls = [
+    #     "https://www.instagram.com/90svogue.__",
+    #     "https://www.instagram.com/p/DMQMR4IzyJb/",
+    #     "https://www.instagram.com/reel/CSb6-Rap2Ip/",
+    #     "https://www.instagram.com/invalid_url_123/",  # Invalid
+    #     "https://about.instagram.com/about-us/careers", # Invalid
+    #     "https://www.teitch.com/akira/" # Invalid
+    # ]
     urls = [
-        "https://www.instagram.com/90svogue.__",
-        "https://www.instagram.com/p/DMQMR4IzyJb/",
-        "https://www.instagram.com/reel/CSb6-Rap2Ip/",
-        "https://www.instagram.com/invalid_url_123/"  # This will fail
+        "https://www.instagram.com/p/DMQMR4IzyJb/"
     ]
-    
     result = await scrape_instagram_urls(
         urls=urls,
         headless=True,

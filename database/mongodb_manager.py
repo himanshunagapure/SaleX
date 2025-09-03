@@ -681,7 +681,7 @@ class MongoDBManager:
             "company_name": instagram_data.get('full_name', ""),
             "company_type": None,
             "decision_makers": None,
-            "bdr": None,
+            "bdr": "AKG",
             "product_interests": None,
             "timeline": None,
             "interest_level": None
@@ -690,16 +690,58 @@ class MongoDBManager:
         # Clean up None values in nested objects
         return self._clean_unified_data(unified_data)
 
+    def is_invalid_linkedin_data(self, name: str) -> bool:
+        """
+        Check if LinkedIn data should be skipped due to invalid/generic names
+        """
+        full_name = name.strip().lower() if name else ""
+        
+        # List of invalid/generic names to skip
+        invalid_names = [
+            'sign up',
+            'signup',
+            'log in',
+            'login',
+            'register',
+            'join now',
+            'get started',
+            'create account',
+            'sign in',
+            'signin',
+            'continue',
+            'next',
+            'submit',
+            'loading',
+            'please wait',
+            'error',
+            'page not found',
+            '404',
+            'access denied',
+            'unauthorized',
+            'linkedin',
+            'connect',
+            'follow',
+            'view profile'
+        ]
+        
+        # Check if full_name is empty or matches invalid patterns
+        return not full_name or full_name in invalid_names
+
     def transform_linkedin_to_unified(self, linkedin_data: Dict[str, Any]) -> Dict[str, Any]:
         """Transform LinkedIn data to unified schema"""
+        # Skip if invalid data
+        full_name = linkedin_data.get('author_name') or linkedin_data.get('full_name')
+        if self.is_invalid_linkedin_data(full_name):
+            return None
+            
         unified_data = {
             "url": linkedin_data.get('url', ""),
             "platform": "linkedin", 
-            "content_type": self._map_linkedin_content_type(linkedin_data.get('url_type', 'profile')),
+            "content_type": self._map_linkedin_content_type(linkedin_data.get('url_type', '')),
             "source": "linkedin-scraper",
             "profile": {
                 "username": linkedin_data.get('username', ""),
-                "full_name": linkedin_data.get('full_name', ""),
+                "full_name": linkedin_data.get('full_name') or linkedin_data.get('author_name', ""),
                 "bio": linkedin_data.get('about') or linkedin_data.get('about_us', ""),
                 "location": linkedin_data.get('location', ""),
                 "job_title": linkedin_data.get('job_title', ""),
@@ -714,7 +756,7 @@ class MongoDBManager:
                     "instagram": None,
                     "twitter": None,
                     "facebook": None,
-                    "linkedin": linkedin_data.get('username'),
+                    "linkedin": linkedin_data.get('username') or linkedin_data.get('author_url'),
                     "youtube": None,
                     "tiktok": None,
                     "other": []
@@ -739,7 +781,7 @@ class MongoDBManager:
             "company_name": linkedin_data.get('full_name', ""),
             "company_type": None,
             "decision_makers": None,
-            "bdr": None,
+            "bdr": "AKG",
             "product_interests": None,
             "timeline": None,
             "interest_level": None
@@ -749,13 +791,32 @@ class MongoDBManager:
 
     def transform_youtube_to_unified(self, youtube_data: Dict[str, Any]) -> Dict[str, Any]:
         """Transform YouTube data to unified schema"""
+         # Extract social media handles from the nested structure
+        social_media_data = youtube_data.get('social_media_handles', {})
+        
+        # Helper function to extract first handle from a list or return None
+        def get_first_handle(handles_list):
+            if handles_list and isinstance(handles_list, list) and len(handles_list) > 0:
+                return handles_list[0].get('username', '') if isinstance(handles_list[0], dict) else handles_list[0]
+            return None
+        
+        # Helper function to extract all URLs from social media handles
+        def get_bio_links():
+            links = []
+            for platform, handles in social_media_data.items():
+                if handles and isinstance(handles, list):
+                    for handle in handles:
+                        if isinstance(handle, dict) and 'url' in handle:
+                            links.append(handle['url'])
+            return links
+
         unified_data = {
             "url": youtube_data.get('url', ""),
             "platform": "youtube",
             "content_type": youtube_data.get('content_type', ""),
             "source": "youtube-scraper",
             "profile": {
-                "username": youtube_data.get('channel_name', ""),
+                "username": "",
                 "full_name": youtube_data.get('channel_name', ""),
                 "bio": youtube_data.get('description', ""),
                 "location": None,
@@ -768,15 +829,15 @@ class MongoDBManager:
                 "address": None,
                 "websites": [],
                 "social_media_handles": {
-                    "instagram": None,
-                    "twitter": None,
-                    "facebook": None,
-                    "linkedin": None,
+                    "instagram": get_first_handle(social_media_data.get('instagram')),
+                    "twitter": get_first_handle(social_media_data.get('twitter')),
+                    "facebook": get_first_handle(social_media_data.get('facebook')),
+                    "linkedin": get_first_handle(social_media_data.get('linkedin')),
                     "youtube": youtube_data.get('channel_name') or youtube_data.get('username'),
-                    "tiktok": None,
+                    "tiktok": get_first_handle(social_media_data.get('tiktok')),
                     "other": []
                 },
-                "bio_links": []
+                "bio_links": get_bio_links()
             },
             "content": {
                 "caption": youtube_data.get('title',""),
@@ -796,7 +857,7 @@ class MongoDBManager:
             "company_name": youtube_data.get('channel_name', ""),
             "company_type": None,
             "decision_makers": None,
-            "bdr": None,
+            "bdr": "AKG",
             "product_interests": None,
             "timeline": None,
             "interest_level": None
@@ -1143,6 +1204,10 @@ class MongoDBManager:
                 # Transform to unified schema
                 unified_data = transform_func(data)
                 
+                if not unified_data:  # 👈 Skip invalid ones
+                    logger.warning(f"⚠️ Skipped invalid {platform} data: {data.get('full_name') or data.get('author_name')}")
+                    continue
+                    
                 # Insert into unified collection
                 result = self.db[self.collections['unified']].insert_one(unified_data)
                 success_count += 1

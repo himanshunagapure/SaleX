@@ -31,7 +31,8 @@ async def example_2_multiple_urls():
     urls = [
         "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
         "https://www.youtube.com/shorts/YIe4jPsvv5g",
-        "https://www.youtube.com/@stillwatchingnetflix"
+        "https://www.youtube.com/@stillwatchingnetflix",
+        "https://www.youtube.com/watch?v=IDjvwIoIqQY&pp=ygUII25vcnRoM24%3D"
     ]
     
     # 1 line to scrape multiple URLs
@@ -47,10 +48,22 @@ async def example_3_from_file():
     print("Example 3: File-based scraping")
     
     # First create a sample URLs file
+#     sample_urls = [
+#         "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+#         "https://www.youtube.com/shorts/YIe4jPsvv5g",
+#         "https://www.youtube.com/@stillwatchingnetflix",
+#         "https://www.youtube.com/watch?v=IDjvwIoIqQY&pp=ygUII25vcnRoM24%3D",
+#         "https://www.youtube.com/watch?v=G_Y9zqjLL9o",
+#         "https://www.youtube.com/watch?v=gGogLqLtZPw",
+#         "https://www.youtube.com/watch?v=OId7NfbCfm8",
+#         "https://www.youtube.com/watch?v=-ExNTLn3DK4&pp=ygUGI3RoZ29h",
+# "https://www.youtube.com/watch?v=qaa9IJIW4go"
+#     ]
     sample_urls = [
-        "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-        "https://www.youtube.com/shorts/YIe4jPsvv5g",
-        "https://www.youtube.com/@stillwatchingnetflix"
+        "https://www.youtube.com/watch?v=OId7NfbCfm8",
+        "https://www.youtube.com/watch?v=-ExNTLn3DK4&pp=ygUGI3RoZ29h",
+"https://www.youtube.com/watch?v=IDjvwIoIqQY&pp=ygUII25vcnRoM24%3D",
+"https://www.youtube.com/watch?v=qaa9IJIW4go"
     ]
     
     with open("sample_urls.txt", "w") as f:

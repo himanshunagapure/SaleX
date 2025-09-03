@@ -1,22 +1,5 @@
 """
 YouTube Scraper Main Interface
-Simple 1-2 line interface for YouTube data extraction
-
-Usage Examples:
-1. Single URL extraction:
-   python main.py --url "https://www.youtube.com/watch?v=VIDEO_ID"
-
-2. Multiple URLs from file:
-   python main.py --file urls.txt
-
-3. Quick extraction with custom output:
-   python main.py --url "https://www.youtube.com/@channel" --output my_data.json
-
-4. Headless mode (faster):
-   python main.py --urls "url1,url2,url3" --headless
-
-5. Interactive mode:
-   python main.py --interactive
 """
 
 import asyncio

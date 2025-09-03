@@ -18,7 +18,8 @@ import time
 import sys
 import os
 from typing import List, Dict, Any, Optional
-
+import re
+from urllib.parse import urlparse
 # Add parent directory to path to import database module
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -130,6 +131,14 @@ class InstagramScraper:
                 print(f"\n[{i}/{len(urls)}] Processing: {url}")
                 
                 try:
+                    # First check if URL type is known before extracting data
+                    initial_content_type = self._determine_content_type_from_url(url)
+                    
+                    # Skip unknown URL types immediately
+                    if initial_content_type == "unknown":
+                        print(f"⚠️ Skipping unknown URL type: {url}")
+                        continue
+                    
                     # Extract data from the URL
                     extracted_data = await self.extractor.extract_graphql_data(url)
                     
@@ -146,6 +155,11 @@ class InstagramScraper:
                     # Determine content type and create clean entry
                     content_type = self._determine_content_type_from_url(url, extracted_data)
                     
+                    # Skip unknown URL types
+                    if content_type == "unknown":
+                        print(f"⚠️ Skipping unknown URL type: {url}")
+                        continue
+                        
                     clean_entry = {
                         "url": url,
                         "content_type": content_type
@@ -179,12 +193,58 @@ class InstagramScraper:
                                   meta_data.get('username_from_title') or
                                   script_data.get('username'))
                         
+                        # Extract caption
+                        caption = meta_data.get('caption') or script_data.get('caption') or ''
+                        
+                        # Extract email and phone from caption
+                        extracted_email = None
+                        extracted_phone = None
+                        
+                        if caption:
+                            # Extract email - more specific pattern that stops at valid TLD
+                            email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,6}'
+                            email_match = re.search(email_pattern, caption)
+                            if email_match:
+                                extracted_email = email_match.group(0)
+                            
+                            # Extract phone number - improved patterns with word boundaries
+                            phone_patterns = [
+                                # Indian mobile numbers (10 digits starting with 6-9)
+                                r'(?<!\d)[6-9]\d{9}(?!\d)',
+                                # US format with country code
+                                r'(?<!\d)\+?1[-.\s]?\(?([0-9]{3})\)?[-.\s]?([0-9]{3})[-.\s]?([0-9]{4})(?!\d)',
+                                # International format with + and country code
+                                r'(?<!\d)\+[1-9]\d{1,3}[-.\s]?\d{3,4}[-.\s]?\d{3,4}[-.\s]?\d{3,4}(?!\d)',
+                                # General format 10-15 digits with optional separators
+                                r'(?<!\d)(?:\+?[1-9]\d{0,3}[-.\s]?)?\d{3,4}[-.\s]?\d{3,4}[-.\s]?\d{3,4}(?!\d)'
+                            ]
+                            
+                            for pattern in phone_patterns:
+                                phone_matches = re.findall(pattern, caption)
+                                if phone_matches:
+                                    # Take the first valid phone number found
+                                    if isinstance(phone_matches[0], tuple):  # For patterns with groups
+                                        extracted_phone = ''.join(phone_matches[0])
+                                    else:
+                                        extracted_phone = phone_matches[0]
+                                    
+                                    # Clean up the phone number (remove extra spaces, dots, hyphens)
+                                    extracted_phone = re.sub(r'[-.\s]+', '', extracted_phone)
+                                    
+                                    # Validate phone length (should be 10-15 digits)
+                                    if 10 <= len(re.sub(r'\D', '', extracted_phone)) <= 15:
+                                        break
+                                    else:
+                                        extracted_phone = None
+                        
                         clean_entry.update({
                             "likes_count": self._format_count(meta_data.get('likes_count') or script_data.get('likes')),
                             "comments_count": self._format_count(meta_data.get('comments_count') or script_data.get('comments')),
                             "username": username,
                             "post_date": meta_data.get('post_date'),
-                            "caption": (meta_data.get('caption') or script_data.get('caption'))
+                            "caption": caption,
+                            "business_email": extracted_email,
+                            "business_phone_number": extracted_phone
                         })
                         
                         # If we found a username and haven't processed it yet, extract profile data
@@ -214,8 +274,8 @@ class InstagramScraper:
                                         "is_verified": user_data.get('is_verified', False),
                                         "is_business_account": user_data.get('is_business_account', False),
                                         "is_professional_account": user_data.get('is_professional_account', True),
-                                        "business_email": user_data.get('business_email'),
-                                        "business_phone_number": user_data.get('business_phone_number'),
+                                        "business_email": user_data.get('business_email') or extracted_email,
+                                        "business_phone_number": user_data.get('business_phone_number') or extracted_phone,
                                         "business_category_name": user_data.get('business_category_name')
                                     }
                                     
@@ -229,7 +289,7 @@ class InstagramScraper:
                                     
                                     # Try to extract business email from biography if not found
                                     if not profile_entry.get('business_email') and profile_entry.get('biography'):
-                                        import re
+                                        
                                         email_match = re.search(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', profile_entry['biography'])
                                         if email_match:
                                             profile_entry['business_email'] = email_match.group(0)
@@ -255,7 +315,6 @@ class InstagramScraper:
                     
                     # Try to extract business email from biography if not found
                     if not clean_entry.get('business_email') and clean_entry.get('biography'):
-                        import re
                         email_match = re.search(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', clean_entry['biography'])
                         if email_match:
                             clean_entry['business_email'] = email_match.group(0)
@@ -288,13 +347,16 @@ class InstagramScraper:
                     print(f"   - Duplicates skipped: {mongodb_stats['duplicate_count']}")
                     print(f"   - Failed insertions: {mongodb_stats['failure_count']}")
                     
-                    # Also save to unified collection
-                    unified_stats = self.mongodb_manager.insert_and_transform_to_unified(all_extracted_data, 'instagram')
-                    print(f"\n💾 Results also saved to unified_leads collection:")
-                    print(f"   - Successfully transformed & inserted: {unified_stats['success_count']}")
-                    print(f"   - Duplicates skipped: {unified_stats['duplicate_count']}")
-                    print(f"   - Failed transformations: {unified_stats['failure_count']}")
+                    # Filter only profile type data for unified collection
+                    profile_data_only = [entry for entry in all_extracted_data if entry.get('content_type') == 'profile']
                     
+                    if profile_data_only:
+                        # Also save to unified collection
+                        unified_stats = self.mongodb_manager.insert_and_transform_to_unified(profile_data_only, 'instagram')
+                        print(f"\n💾 Results also saved to unified_leads collection:")
+                        print(f"   - Successfully transformed & inserted: {unified_stats['success_count']}")
+                        print(f"   - Duplicates skipped: {unified_stats['duplicate_count']}")
+                        print(f"   - Failed transformations: {unified_stats['failure_count']}")
                 except Exception as e:
                     print(f"❌ Error saving to MongoDB: {e}")
             
@@ -399,11 +461,25 @@ class InstagramScraper:
                 except Exception as e:
                     print(f"⚠️ Warning during cleanup: {e}")
     
-    def _determine_content_type_from_url(self, url: str, data: Dict[str, Any]) -> str:
+    def _determine_content_type_from_url(self, url: str, data: Dict[str, Any] = None) -> str:
         """Determine content type from URL and data"""
+        
+        parsed_url = urlparse(url)
+        
+        # Remove leading/trailing slashes and split path
+        path = parsed_url.path.strip('/')
+        path_parts = [part for part in path.split('/') if part]
+
+        # Only process instagram.com URLs
+        if 'instagram.com' not in parsed_url.netloc:
+            return "unknown"
+
         if '/reel/' in url:
             return "video"
         elif '/p/' in url:
+            # If no data provided, default to article (will be refined later with data)
+            if data is None:
+                return "article"
             # Check if it's actually a video post
             if (data.get('meta_data', {}).get('content_type') == 'video' or
                 data.get('script_data', {}).get('is_video') or
@@ -411,8 +487,15 @@ class InstagramScraper:
                 return "video"
             else:
                 return "article"
-        else:
-            return "profile"
+        # Check for profile URLs: /[username]/ (only one path component)
+        elif len(path_parts) == 1 and path_parts[0]:
+            # Additional validation: username should be alphanumeric, dots, underscores
+            username = path_parts[0]
+            if username and all(c.isalnum() or c in '._' for c in username):
+                return "profile"
+    
+        # All other Instagram URLs are unknown
+        return "unknown"
     
     def _format_count(self, count) -> str:
         """Format count numbers to readable format (e.g., 16000 -> 16K)"""

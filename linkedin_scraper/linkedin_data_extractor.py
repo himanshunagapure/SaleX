@@ -152,12 +152,13 @@ class LinkedInDataExtractor:
             print(f"✓ Navigation completed, popup closed: {popup_closed}")
             
             # Wait for page to load and network requests to complete
-            await asyncio.sleep(10)
+            await asyncio.sleep(5)
             
             # Get page content
-            html_content = await self.browser_manager.get_page_content()
-            rendered_text = await self.browser_manager.get_rendered_text()
-            
+            html_content = await self.browser_manager.get_page_content() #self.page.content() = Returns the full HTML source of the current page after JavaScript has run.
+
+            rendered_text = await self.browser_manager.get_rendered_text() #Returns only the visible text(no tags) inside the <body> tag after JavaScript has rendered it.
+
             # Detect URL type
             url_type = self.browser_manager.detect_url_type(url)
             
@@ -409,6 +410,7 @@ class LinkedInDataExtractor:
         post_data = {}
         
         try:
+            print(f"✅ Parsing post JSON-LD data: {json_data}")
             # Handle DiscussionForumPosting structure
             if json_data.get('@type') == 'DiscussionForumPosting':
                 post_data['headline'] = json_data.get('headline', '')
@@ -456,6 +458,52 @@ class LinkedInDataExtractor:
                             elif 'CommentAction' in interaction_type:
                                 post_data['comments_count'] = interaction.get('userInteractionCount', 0)
             
+            elif json_data.get('@type') == 'VideoObject':
+                post_data['headline'] = json_data.get('headline', '')
+                post_data['article_body'] = json_data.get('description', '')
+                post_data['date_published'] = json_data.get('datePublished', '')
+                post_data['url'] = json_data.get('@id', '')
+                post_data['comment_count'] = json_data.get('commentCount', 0)
+                
+                # Extract author information
+                if 'creator' in json_data and isinstance(json_data['creator'], dict):
+                    author = json_data['creator']
+                    post_data['author'] = {
+                        'name': author.get('name', ''),
+                        'url': author.get('url', ''),
+                        'image_url': author.get('image', {}).get('url', '') if 'image' in author else ''
+                    }
+                    
+                    # Extract author followers
+                    if 'interactionStatistic' in author and isinstance(author['interactionStatistic'], dict):
+                        interaction = author['interactionStatistic']
+                        if interaction.get('interactionType') == 'http://schema.org/FollowAction':
+                            post_data['author_followers'] = interaction.get('userInteractionCount', 0)
+                
+                # Extract comments
+                if 'comment' in json_data and isinstance(json_data['comment'], list):
+                    comments = []
+                    for comment in json_data['comment']:
+                        if isinstance(comment, dict):
+                            comment_data = {
+                                'text': comment.get('text', ''),
+                                'date_published': comment.get('datePublished', ''),
+                                'author_name': comment.get('creator', {}).get('name', ''),
+                                'likes': comment.get('interactionStatistic', {}).get('userInteractionCount', 0)
+                            }
+                            comments.append(comment_data)
+                    post_data['comments'] = comments
+                
+                # Extract interaction statistics
+                if 'interactionStatistic' in json_data and isinstance(json_data['interactionStatistic'], list):
+                    for interaction in json_data['interactionStatistic']:
+                        if isinstance(interaction, dict):
+                            interaction_type = interaction.get('interactionType', '')
+                            if 'LikeAction' in interaction_type:
+                                post_data['likes'] = interaction.get('userInteractionCount', 0)
+                            elif 'CommentAction' in interaction_type:
+                                post_data['comments_count'] = interaction.get('userInteractionCount', 0)
+
             print(f"✅ Extracted post data: {post_data.get('headline', 'Unknown')[:50]}...")
             
         except Exception as e:
