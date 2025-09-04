@@ -211,7 +211,22 @@ class AdvancedYouTubeExtractor:
             # Get page content
             html_content = await self.browser_manager.get_page_content()
             rendered_text = await self.browser_manager.get_rendered_text()
+
+            # ========== CHECK IF CONTENT IS TRAVEL RELATED ==========
+            is_travel_related = await self._is_travel_related_content(rendered_text, html_content, url)
+            if not is_travel_related:
+                print(f"❌ Content is not travel related, skipping URL: {url}")
+                return {
+                    'url': url,
+                    'error': 'Content is not travel related',
+                    'success': False,
+                    'page_type': page_type,
+                    'skipped': True,
+                    'reason': 'not_travel_related'
+                }
             
+            print(f"✓ Content is travel related, proceeding with extraction")
+
             # Extract data from different sources
             extracted_data = {
                 'url': url,
@@ -298,6 +313,131 @@ class AdvancedYouTubeExtractor:
         else:
             return 'unknown'
     
+
+    async def _is_travel_related_content(self, rendered_text: str, html_content: str, url: str) -> bool:
+        """Check if the content is travel related"""
+        try:
+            # Convert to lowercase for case-insensitive matching
+            text_lower = rendered_text.lower()
+            html_lower = html_content.lower()
+            url_lower = url.lower()
+            
+            # Primary travel keywords - strong indicators
+            primary_travel_keywords = [
+                'travel', 'trip', 'vacation', 'holiday', 'tourism', 'tourist',
+                'destination', 'journey', 'adventure', 'explore', 'visiting',
+                'backpack', 'backpacking', 'nomad', 'wanderlust', 'getaway',
+                'itinerary', 'sightseeing', 'excursion', 'expedition'
+            ]
+            
+            # Secondary travel keywords - supportive indicators
+            secondary_travel_keywords = [
+                'hotel', 'resort', 'hostel', 'accommodation', 'booking',
+                'flight', 'airline', 'airport', 'passport', 'visa',
+                'beach', 'mountain', 'city break', 'road trip', 'cruise',
+                'restaurant', 'food tour', 'local cuisine', 'street food',
+                'museum', 'landmark', 'attraction', 'guide', 'tour', 'travel vlog',
+                'budget travel', 'luxury travel', 'solo travel', 'family travel',
+                'culture', 'heritage', 'historic', 'scenery', 'landscape', 'backpack'
+            ]
+            
+            # Travel-related places and regions
+            travel_places = [
+                'paris', 'tokyo', 'london', 'new york', 'bali', 'thailand',
+                'italy', 'spain', 'greece', 'japan', 'india', 'australia',
+                'europe', 'asia', 'africa', 'south america', 'north america',
+                'caribbean', 'mediterranean', 'scandinavia', 'middle east',
+                'national park', 'world heritage', 'unesco'
+            ]
+            
+            # Travel activities and experiences
+            travel_activities = [
+                'hiking', 'trekking', 'camping', 'safari', 'diving', 'snorkeling',
+                'skiing', 'surfing', 'climbing', 'photography', 'festival',
+                'pilgrimage', 'volunteering', 'study abroad', 'gap year',
+                'honeymoon', 'retreat', 'spa', 'wellness', 'eco tourism'
+            ]
+            
+            # Transportation related
+            transportation_keywords = [
+                'train', 'bus', 'car rental', 'uber', 'taxi', 'metro',
+                'transfer', 'transportation'
+            ]
+            
+            # Combine all keywords
+            all_travel_keywords = (primary_travel_keywords + secondary_travel_keywords + 
+                                 travel_places + travel_activities + transportation_keywords)
+            
+            # Count matches in different content areas
+            title_matches = 0
+            description_matches = 0
+            content_matches = 0
+            url_matches = 0
+            
+            # Extract title from HTML
+            soup = BeautifulSoup(html_content, 'html.parser')
+            title = ""
+            title_tag = soup.find('title')
+            if title_tag:
+                title = title_tag.text.lower()
+            
+            # Also check meta description
+            description = ""
+            meta_desc = soup.find('meta', attrs={'name': 'description'})
+            if meta_desc:
+                description = meta_desc.get('content', '').lower()
+            
+            # Check URL for travel keywords
+            for keyword in all_travel_keywords:
+                if keyword in url_lower:
+                    url_matches += 1
+            
+            # Check title for travel keywords (higher weight)
+            for keyword in primary_travel_keywords:
+                if keyword in title:
+                    title_matches += 2  # Higher weight for primary keywords in title
+                    
+            for keyword in secondary_travel_keywords + travel_places + travel_activities:
+                if keyword in title:
+                    title_matches += 1
+            
+            # Check description for travel keywords
+            for keyword in primary_travel_keywords:
+                if keyword in description:
+                    description_matches += 2
+                    
+            for keyword in secondary_travel_keywords + travel_places + travel_activities:
+                if keyword in description:
+                    description_matches += 1
+            
+            # Check main content for travel keywords
+            for keyword in all_travel_keywords:
+                # Count occurrences but cap at 3 per keyword to avoid spam
+                count = min(text_lower.count(keyword), 3)
+                if keyword in primary_travel_keywords:
+                    content_matches += count * 2  # Higher weight for primary keywords
+                else:
+                    content_matches += count
+            
+            # Calculate total score
+            total_score = url_matches + title_matches + description_matches + content_matches
+            
+            # Scoring thresholds
+            if total_score >= 5:  # Strong travel indication
+                print(f"✓ Travel content detected - Score: {total_score} (URL: {url_matches}, Title: {title_matches}, Desc: {description_matches}, Content: {content_matches})")
+                return True
+            elif total_score >= 3:  # Moderate travel indication
+                print(f"✓ Moderate travel content detected - Score: {total_score} (URL: {url_matches}, Title: {title_matches}, Desc: {description_matches}, Content: {content_matches})")
+                return True
+            else:
+                print(f"❌ Not travel related - Score: {total_score} (URL: {url_matches}, Title: {title_matches}, Desc: {description_matches}, Content: {content_matches})")
+                return False
+                
+        except Exception as e:
+            print(f"⚠️ Error checking travel content: {e}")
+            # If there's an error, assume it might be travel related to avoid false negatives
+            return True
+
     async def _extract_data_from_api(self) -> Dict[str, Any]:
         """Extract data from YouTube API responses"""
         extracted = {}
