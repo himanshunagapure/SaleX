@@ -1,6 +1,6 @@
 # AI Lead Generation Application
 
-A comprehensive lead generation system that uses AI-powered search query generation and multi-platform scraping (including Instagram, LinkedIn, YouTube, FB, Twitter, Reddit, Quora and general websites.) to identify potential customers based on Ideal Customer Profiles (ICP).
+A comprehensive lead generation system that uses AI-powered search query generation and multi-platform scraping (including Instagram, LinkedIn, YouTube, and general websites) to identify potential customers based on Ideal Customer Profiles (ICP). The system features a unified data storage approach that normalizes lead data across all platforms into a consistent schema.
 
 ## Table of Contents
 
@@ -153,20 +153,75 @@ URLs from Search Results
 }
 ```
 
-#### Scraped Data Collections
-- `web_scraper_results` - General website data
-- `instagram_results` - Instagram profile data  
-- `linkedin_results` - LinkedIn profile/company data
-- `youtube_results` - YouTube channel data
+#### Platform-Specific Collections
+- `web_leads` - General website data
+- `instagram_leads` - Instagram profile data  
+- `linkedin_leads` - LinkedIn profile/company data
+- `youtube_leads` - YouTube channel data
+
+#### Unified Leads Collection
+All scraped leads are normalized and stored in the `unified_leads` collection with a consistent schema:
+
+```javascript
+{
+  "_id": ObjectId,
+  "url": "source_url",
+  "platform": "instagram|linkedin|youtube|web",
+  "content_type": "profile|post|video|article",
+  "source": "scraper_source",
+  "profile": {
+    "username": "username",
+    "full_name": "Full Name",
+    "bio": "Bio text",
+    "job_title": "Job Title",
+    "location": "City, Country",
+    "employee_count": "100-500"
+  },
+  "contact": {
+    "emails": ["email@example.com"],
+    "phone_numbers": ["+1234567890"],
+    "address": "123 Street, City, Country",
+    "websites": ["https://example.com"],
+    "social_media_handles": {
+      "twitter": "@handle",
+      "facebook": "username",
+      "linkedin": "username"
+    },
+    "bio_links": ["https://link1.com", "https://link2.com"]
+  },
+  "content": {
+    "caption": "Post/video caption",
+    "upload_date": "2024-01-01T12:00:00Z",
+    "channel_name": "Channel Name",
+    "author_name": "Author Name"
+  },
+  "metadata": {
+    "scraped_at": "2024-01-01T12:00:00Z",
+    "data_quality_score": 0.95,
+    "original_source": "original_platform_collection"
+  }
+}
+```
+
+### Data Transformation Pipeline
+
+1. **Platform-Specific Collection**: Raw data is first stored in platform-specific collections
+2. **Normalization**: Data is transformed into the unified schema
+3. **Deduplication**: Duplicate leads are identified and merged
+4. **Quality Scoring**: Each lead receives a data quality score
+5. **Unified Storage**: Processed leads are stored in the `unified_leads` collection
 
 ### Database Services
 
 The application uses a centralized MongoDB manager that provides:
 - Connection pooling
-- Data validation
-- Error handling
-- Consistent document structure
+- Data validation and transformation
+- Error handling and retries
+- Consistent document structure across platforms
 - URL deduplication
+- Batch processing for improved performance
+- Data quality scoring
+- Schema validation and migration support
 
 ## API Documentation
 
