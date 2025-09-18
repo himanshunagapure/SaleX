@@ -1,25 +1,41 @@
 # AI Lead Generation Application
 
-A comprehensive lead generation system that uses AI-powered search query generation and multi-platform scraping (including Instagram, LinkedIn, YouTube, FB, Twitter, Reddit, Quora and general websites.) to identify potential customers based on Ideal Customer Profiles (ICP).
+A comprehensive lead generation system that uses AI-powered search query generation and multi-platform scraping (Instagram, LinkedIn, YouTube, and general websites) to identify potential customers based on Ideal Customer Profiles (ICP). The system features a unified data model for consistent lead storage and processing across all platforms.
 
 ## Table of Contents
 
 - [Overview](#overview)
+- [Key Features](#key-features)
 - [Architecture](#architecture)
 - [System Flow](#system-flow)
 - [Scrapers](#scrapers)
 - [Database](#database)
+- [Unified Data Model](#unified-data-model)
 - [API Documentation](#api-documentation)
 - [Installation](#installation)
 - [Configuration](#configuration)
 - [Usage](#usage)
 - [Project Structure](#project-structure)
+- [Contributing](#contributing)
+- [License](#license)
 
 ## Overview
 
 This application orchestrates multiple specialized scrapers to collect potential lead data from various platforms based on a predefined Ideal Customer Profile. It uses Google's Gemini AI to generate targeted search queries and coordinates data collection across web scraping, Instagram, LinkedIn, and YouTube platforms.
 
 **Target Use Case:** Premium bus travel and group tour services seeking corporate clients, wedding planners, educational institutions, and family group organizers.
+
+## Key Features
+
+- **Multi-platform Scraping**: Unified interface for Instagram, LinkedIn, YouTube, and general web scraping
+- **AI-Powered Query Generation**: Uses Google's Gemini AI to generate targeted search queries
+- **Unified Data Model**: Standardized data storage across all platforms in the `unified_leads` collection
+- **Dual Storage**: Maintains both platform-specific and unified data collections
+- **Data Quality Scoring**: Automated quality assessment for each lead
+- **Batch Processing**: Efficient handling of large datasets
+- **Duplicate Detection**: Smart deduplication based on URL and content
+- **Modular Architecture**: Easy to extend with new scrapers and data sources
+- **Comprehensive Logging**: Detailed logging for debugging and monitoring
 
 ## Architecture
 
@@ -138,7 +154,9 @@ URLs from Search Results
 
 ## Database
 
-### MongoDB Collections
+The application uses MongoDB for data storage with the following collections:
+
+### Core Collections
 
 #### URLs Collection
 ```javascript
@@ -149,7 +167,10 @@ URLs from Search Results
   "query": "search query used",
   "domain": "example.com",
   "created_at": ISODate,
-  "scraped": boolean
+  "scraped": boolean,
+  "last_scraped_at": ISODate,
+  "scrape_attempts": Number,
+  "error": String
 }
 ```
 
@@ -158,6 +179,65 @@ URLs from Search Results
 - `instagram_leads` - Instagram profile data  
 - `linkedin_leads` - LinkedIn profile/company data
 - `youtube_leads` - YouTube channel data
+- `leadgen_leads` - Processed and filtered leads from all sources
+
+## Unified Data Model
+
+All scraped leads are normalized and stored in the `unified_leads` collection with a consistent schema:
+
+```javascript
+{
+  "_id": ObjectId,
+  "url": "source_url",
+  "platform": "instagram|linkedin|youtube|web",
+  "content_type": "profile|post|video|article",
+  "source": "scraper_source",
+  "profile": {
+    "username": "username",
+    "full_name": "Full Name",
+    "bio": "Bio text",
+    "job_title": "Job Title",
+    "location": "City, Country",
+    "employee_count": "100-500"
+  },
+  "contact": {
+    "emails": ["email@example.com"],
+    "phone_numbers": ["+1234567890"],
+    "address": "123 Street, City, Country",
+    "websites": ["https://example.com"],
+    "social_media_handles": {
+      "twitter": "@handle",
+      "facebook": "username",
+      "linkedin": "username"
+    },
+    "bio_links": ["https://link1.com", "https://link2.com"]
+  },
+  "content": {
+    "caption": "Post/video caption",
+    "upload_date": "2024-01-01T12:00:00Z",
+    "channel_name": "Channel Name",
+    "author_name": "Author Name"
+  },
+  "metadata": {
+    "scraped_at": "2024-01-01T12:00:00Z",
+    "data_quality_score": 0.95,
+    "source_url": "original_source_url",
+    "platform_specific_data": {}
+  },
+  "is_processed": Boolean,
+  "processing_errors": [String],
+  "created_at": ISODate,
+  "updated_at": ISODate
+}
+```
+
+### Data Quality Scoring
+
+Each lead is assigned a data quality score (0-1) based on:
+- Presence of contact information (email, phone)
+- Completeness of profile data
+- Social media presence
+- Data freshness
 
 #### Unified Leads Collection
 All scraped leads are normalized and stored in the `unified_leads` collection with a consistent schema:
@@ -225,100 +305,170 @@ The application uses a centralized MongoDB manager that provides:
 
 ## API Documentation
 
+The Lead Generation API provides a RESTful interface for managing the lead generation pipeline. All endpoints return JSON responses and require proper authentication.
+
+### Authentication
+All API endpoints require an API key. Include it in the `X-API-Key` header.
+
 ### Base URL
-```
-http://localhost:5000
-```
+`https://your-domain.com/api`
 
 ### Endpoints
 
-#### Health Check
-```http
-GET /health
-```
-**Response:**
-```json
-{
-  "status": "healthy",
-  "timestamp": "2025-01-15T10:30:00",
-  "service": "Lead Generation Backend"
-}
-```
-
-#### Get Available Scrapers
-```http
-GET /api/scrapers
-```
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "available_scrapers": ["web_scraper", "instagram", "linkedin", "youtube"],
-    "scrapers_info": {
-      "web_scraper": "General web scraping for websites",
-      "instagram": "Instagram profiles and posts",
-      "linkedin": "LinkedIn profiles and companies",
-      "youtube": "YouTube channels and videos"
+#### 1. System Status
+- **GET** `/health`
+  - Check if the API is running
+  - Response:
+    ```json
+    {
+      "status": "healthy",
+      "timestamp": "2024-01-15T10:00:00Z",
+      "service": "Lead Generation Backend"
     }
-  }
-}
-```
+    ```
 
-#### Get ICP Template
-```http
-GET /api/icp/template
-```
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "icp_template": {
-      "product_details": {
-        "product_name": "Premium Bus Travel & Group Tour Services",
-        "product_category": "Travel & Tourism/Transportation Services",
-        "usps": ["..."],
-        "pain_points_solved": ["..."]
-      },
-      "icp_information": {
-        "target_industry": ["Corporate Companies", "Educational Institutions", "..."],
-        "competitor_companies": ["RedBus", "MakeMyTrip", "..."],
-        "company_size": "10-1000+ employees/members",
-        "decision_maker_persona": ["HR Manager", "Event Coordinator", "..."],
-        "region": ["India", "Major Cities", "Tourist Destinations"],
-        "budget_range": "$5,000-$50,000 annually",
-        "travel_occasions": ["Corporate offsites", "Wedding functions", "..."]
+#### 2. Available Scrapers
+- **GET** `/api/scrapers`
+  - List all available scrapers and their descriptions
+  - Response:
+    ```json
+    {
+      "success": true,
+      "data": {
+        "available_scrapers": ["web_scraper", "instagram", "linkedin", "youtube"],
+        "scrapers_info": {
+          "web_scraper": "General web scraping for websites",
+          "instagram": "Instagram profiles and posts",
+          "linkedin": "LinkedIn profiles and companies",
+          "youtube": "YouTube channels and videos"
+        }
       }
     }
-  }
-}
-```
+    ```
 
-#### Run Complete Lead Generation Pipeline
-```http
-POST /api/lead-generation/run
-```
-**Request Body:**
-```json
-{
-  "icp_data": {
-    "product_details": {
-      "product_name": "Premium Bus Travel Services",
-      "product_category": "Travel & Tourism",
-      "usps": ["Luxury fleet", "Custom packages"],
-      "pain_points_solved": ["Complex logistics", "High costs"]
-    },
-    "icp_information": {
-      "target_industry": ["Corporate Companies", "Wedding Planners"],
-      "company_size": "10-500 employees",
-      "decision_maker_persona": ["HR Manager", "Event Coordinator"],
-      "region": ["India", "Major Cities"],
-      "budget_range": "$5,000-$25,000 annually"
+#### 3. ICP Management
+- **GET** `/api/icp/template`
+  - Get ICP template with all required fields
+  - Response:
+    ```json
+    {
+      "success": true,
+      "data": {
+        "icp_template": {
+          "product_details": {
+            "product_name": "Premium Bus Travel & Group Tour Services",
+            "product_category": "Travel & Tourism/Transportation Services",
+            "usps": ["Luxury bus fleet with premium amenities", "..."],
+            "pain_points_solved": ["Complicated group travel logistics", "..."]
+          },
+          "icp_information": {
+            "target_industry": ["Corporate Companies", "Educational Institutions", "..."],
+            "company_size": "10-1000+ employees/members",
+            "decision_maker_persona": ["HR Manager", "Event Coordinator", "..."],
+            "region": ["India", "Major Cities", "Tourist Destinations"],
+            "budget_range": "$5,000-$50,000 annually"
+          }
+        }
+      }
     }
-  },
-  "selected_scrapers": ["web_scraper", "instagram", "linkedin"]
-}
+    ```
+
+#### 4. Lead Generation Pipeline
+- **POST** `/api/lead-generation/run`
+  - Run complete lead generation pipeline
+  - Request Body:
+    ```json
+    {
+      "icp_data": {
+        "product_details": {
+          "product_name": "Premium Bus Travel Services",
+          "product_category": "Travel & Tourism",
+          "usps": ["Luxury fleet", "Custom packages"],
+          "pain_points_solved": ["Complex logistics", "High costs"]
+        },
+        "icp_information": {
+          "target_industry": ["Corporate Companies", "Wedding Planners"],
+          "company_size": "10-500 employees",
+          "decision_maker_persona": ["HR Manager", "Event Coordinator"],
+          "region": ["India", "Major Cities"],
+          "budget_range": "$5,000-$25,000 annually"
+        }
+      },
+      "selected_scrapers": ["web_scraper", "instagram", "linkedin"]
+    }
+    ```
+  - Response:
+    ```json
+    {
+      "success": true,
+      "data": {
+        "pipeline_id": "gen_abc123xyz",
+        "status": "started",
+        "message": "Lead generation pipeline initiated",
+        "icp_identifier": "premium-bus-travel_20240918_1234_a1b2c3d4"
+      }
+    }
+    ```
+
+#### 5. Direct Lead Generation
+- **POST** `/api/lead-generation/direct`
+  - Run lead generation using existing URLs
+  - Request Body:
+    ```json
+    {
+      "scraper_selections": {
+        "web_scraper": 10,
+        "instagram": 5,
+        "linkedin": 5
+      },
+      "icp_identifier": "premium-bus-travel_20240918_1234_a1b2c3d4"
+    }
+    ```
+
+#### 6. Lead Processing
+- **POST** `/api/leads/filter`
+  - Filter and process raw leads
+  - Request Body (optional):
+    ```json
+    {
+      "query_filter": {},
+      "batch_size": 50
+    }
+    ```
+
+- **POST** `/api/leads/enhance`
+  - Enhance leads with additional contact information
+  - Request Body (optional):
+    ```json
+    {
+      "limit": 0,
+      "batch_size": 20
+    }
+    ```
+
+#### 7. Data Retrieval
+- **GET** `/api/leads/available-urls`
+  - Get count of available unprocessed URLs by type
+  - Response:
+    ```json
+    {
+      "success": true,
+      "data": {
+        "web_scraper": 42,
+        "instagram": 15,
+        "linkedin": 28,
+        "youtube": 10
+      }
+    }
+    ```
+
+- **GET** `/api/leads/icp/<icp_identifier>`
+  - Get leads filtered by ICP identifier
+  - Response includes paginated list of leads
+
+- **GET** `/api/leads/icp/<icp_identifier>/stats`
+  - Get statistics for a specific ICP
+  - Response includes lead counts, source distribution, and data quality metrics
 ```
 
 **Response:**
@@ -599,34 +749,29 @@ print(f"Generated {len(queries)} search queries")
 lead-generation-app/
 ├── main.py                    # Main orchestrator
 ├── app.py                     # Flask API server
-├── requirements.txt           # Python dependencies
-├── .env                       # Environment variables
-│
-├── web_url_scraper/          # URL collection module
 │   ├── main.py
-│   └── database_service.py
-│
-├── web_scraper/              # General web scraper
-│   └── main_app.py
-│
-├── instagram_scraper/        # Instagram scraper
-│   └── main.py
-│
-├── linkedin_scraper/         # LinkedIn scraper
-│   └── main.py
-│
-├── yt_scraper/              # YouTube scraper
-│   └── main.py
-│
-├── database/                 # Database management
-│   └── mongodb_manager.py
-│
-└── reports/                  # Generated reports
-    ├── orchestration_report_*.json
-    ├── web_scraper_results.json
-    ├── instagram_results.json
-    ├── linkedin_results.json
-    └── youtube_results.json
+│   └── README.md
+├── web_scraper/           # General web scraping module
+│   ├── ai_integration/    # AI components
+│   ├── data_models/       # Data models
+│   ├── extractors/        # Data extraction logic
+│   ├── processors/        # Data processing pipelines
+│   ├── main.py
+│   └── README.md
+├── web_url_scraper/       # URL collection module
+│   ├── database_service.py
+│   ├── main.py
+│   └── README.md
+├── yt_scraper/            # YouTube scraping module
+│   ├── src/
+│   ├── main.py
+│   └── README.md
+├── app.py                 # Flask API entry point
+├── contact_scraper.py     # Contact information extraction
+├── filter_web_lead.py     # Lead filtering and processing
+├── main.py                # Main orchestration script
+├── requirements.txt        # Python dependencies
+└── README.md              # This file
 ```
 
 ## Key Features
