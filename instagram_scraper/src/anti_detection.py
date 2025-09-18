@@ -33,21 +33,20 @@ class FingerprintType(Enum):
 class HumanBehaviorProfile:
     scroll_speed_range: Tuple[float, float] = (0.5, 2.0)
     mouse_speed_range: Tuple[float, float] = (100, 300)
-    click_delay_range: Tuple[float, float] = (0.1, 0.5)
+    click_delay_range: Tuple[float, float] = (0.1, 0.3)
     pause_probability: float = 0.15
-    hesitation_probability: float = 0.25
+    hesitation_probability: float = 0.2
     exploration_probability: float = 0.1
 
 
 @dataclass
 class NetworkProfile:
     request_spacing_range: Tuple[float, float] = (1.0, 3.0)
-    jitter_factor: float = 0.3
-    backoff_factor: float = 1.5
+    jitter_factor: float = 0.2
+    backoff_factor: float = 1.3
     max_retries: int = 3
-    connection_timeout: float = 30.0
-    keep_alive_timeout: float = 60.0
-
+    connection_timeout: float = 25.0
+    keep_alive_timeout: float = 50.0
 
 class AntiDetectionManager:
     """Comprehensive anti-detection manager for Instagram scraping"""
@@ -538,33 +537,63 @@ async def create_stealth_browser_context(playwright, anti_detection_manager: Ant
     browser = await playwright.chromium.launch(
         headless=context_options.get('headless', True),
         args=[
-            '--no-sandbox',
-            '--disable-blink-features=AutomationControlled',
-            '--disable-dev-shm-usage',
-            '--disable-web-security',
-            '--disable-features=VizDisplayCompositor',
-            '--disable-extensions',
-            '--disable-plugins',
-            '--disable-background-timer-throttling',
-            '--disable-backgrounding-occluded-windows',
-            '--disable-renderer-backgrounding',
-            '--disable-field-trial-config',
-            '--disable-ipc-flooding-protection',
-            '--no-first-run',
-            '--no-default-browser-check',
-            '--disable-default-apps',
-            '--disable-sync',
-            '--disable-translate',
-            '--hide-scrollbars',
-            '--mute-audio',
-            '--no-zygote',
-            '--disable-gpu',
-            '--disable-software-rasterizer',
-            '--disable-background-networking',
-            '--disable-client-side-phishing-detection',
-            '--disable-component-extensions-with-background-pages',
-            '--disable-domain-reliability',
-            '--disable-features=TranslateUI'
+        # Essential security and automation hiding
+        '--no-sandbox',
+        '--disable-blink-features=AutomationControlled',
+        '--disable-dev-shm-usage',
+        
+        # Single instance of each performance arg
+        '--disable-gpu',
+        '--disable-software-rasterizer',
+        '--disable-features=VizDisplayCompositor',
+        
+        # Resource optimization
+        '--disable-extensions',
+        '--disable-plugins',
+        '--disable-images',  # Save bandwidth
+        '--disable-background-timer-throttling',
+        '--disable-backgrounding-occluded-windows',
+        '--disable-renderer-backgrounding',
+        
+        # Memory management
+        '--memory-pressure-off',
+        '--max_old_space_size=4096',
+        '--js-flags=--max-old-space-size=4096',
+        
+        # Network stability (critical for your issue)
+        '--disable-background-networking',
+        '--disable-background-sync',
+        '--disable-hang-monitor',
+        '--disable-ipc-flooding-protection',
+        '--disable-popup-blocking',
+        '--disable-prompt-on-repost',
+        
+        # Logging and monitoring
+        '--disable-logging',
+        '--disable-gpu-logging',
+        
+        # UI elements (not needed on servers)
+        '--disable-translate',
+        '--disable-sync',
+        '--hide-scrollbars',
+        '--mute-audio',
+        '--no-first-run',
+        '--no-default-browser-check',
+        
+        # Server stability
+        '--disable-component-extensions-with-background-pages',
+        '--disable-component-update',
+        '--disable-domain-reliability',
+        '--disable-client-side-phishing-detection',
+        '--password-store=basic',
+        '--use-mock-keychain',
+        
+        # Network timeout handling
+        '--enable-features=NetworkService,NetworkServiceLogging',
+        '--aggressive-cache-discard',
+        '--force-color-profile=srgb',
+        '--metrics-recording-only',
+        '--safebrowsing-disable-auto-update'
         ]
     )
     

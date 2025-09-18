@@ -6,6 +6,7 @@ Handles common failure cases and implements retry logic
 import asyncio
 import logging
 import time
+import random
 from typing import Callable, Any, Optional, Dict
 from enum import Enum
 
@@ -67,7 +68,12 @@ class ErrorHandler:
             return ErrorType.BLOCKED_PROFILE
         elif "timeout" in error_message or "timed out" in error_message:
             return ErrorType.TIMEOUT
-        elif "connection" in error_message or "network" in error_message:
+        elif any(err in error_message for err in [
+            "connection", "network", "err_connection_reset", "err_network_changed",
+            "err_internet_disconnected", "err_connection_refused", "err_connection_timed_out",
+            "err_name_not_resolved", "net::err_", "connection reset", "network error",
+            "connection refused", "connection timed out", "name not resolved"
+        ]):
             return ErrorType.NETWORK_ERROR
         elif "private" in error_message:
             return ErrorType.PRIVATE_PROFILE
@@ -86,13 +92,28 @@ class ErrorHandler:
         return True
         
     def get_retry_delay(self, error_type: ErrorType, retry_count: int) -> float:
-        """Calculate retry delay with exponential backoff"""
+        """Calculate retry delay with exponential backoff and jitter"""
+        base_delay = self.base_delay * (2 ** retry_count)
+        
         if error_type == ErrorType.RATE_LIMIT:
             # Longer delay for rate limits
-            return self.base_delay * (2 ** retry_count) * 5
+            delay = base_delay * 3
+        elif error_type == ErrorType.NETWORK_ERROR:
+            # Longer delay for network errors (connection reset, etc.)
+            delay = base_delay * 2.5
+        elif error_type == ErrorType.TIMEOUT:
+            # Moderate delay for timeouts
+            delay = base_delay * 2
         else:
             # Standard exponential backoff
-            return self.base_delay * (2 ** retry_count)
+            delay = base_delay
+        
+        # Add jitter to prevent thundering herd
+        jitter = random.uniform(0.8, 1.2)
+        delay *= jitter
+        
+        # Cap delay between 1 and 10 seconds
+        return max(1.0, min(10.0, delay))
             
     async def retry_with_backoff(
         self, 

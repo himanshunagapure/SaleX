@@ -48,7 +48,9 @@ class WebScraperOrchestrator:
                  enable_quality_engine: bool = True,
                  max_workers: int = 5,
                  delay_between_requests: float = 1.0,
-                 use_mongodb: bool = True):
+                 use_mongodb: bool = True,
+                 max_retries: int = 2,
+                 enable_retry: bool = True):
         """
         Initialize the orchestrator
         
@@ -59,6 +61,8 @@ class WebScraperOrchestrator:
             max_workers: Maximum concurrent workers for processing
             delay_between_requests: Delay between requests to avoid rate limiting
             use_mongodb: Whether to save data to MongoDB (default: True)
+            max_retries: Maximum number of retries for network errors (default: 2)
+            enable_retry: Whether to enable retry mechanism for network errors (default: True)
         """
         self.storage = LeadStorage(storage_path)
         self.export_manager = ExportManager(self.storage)
@@ -69,6 +73,8 @@ class WebScraperOrchestrator:
         self.max_workers = max_workers
         self.delay_between_requests = delay_between_requests
         self.use_mongodb = use_mongodb
+        self.max_retries = max_retries
+        self.enable_retry = enable_retry
         
         # Track processed URLs to avoid duplicates
         self.processed_urls: Set[str] = set()
@@ -124,6 +130,9 @@ class WebScraperOrchestrator:
         """
         Step 2-4: Classify URL and fetch content (static or dynamic)
         
+        Args:
+            url: URL to process
+        
         Returns:
             Dictionary with classification, page content, and processing results
         """
@@ -134,29 +143,11 @@ class WebScraperOrchestrator:
             
             page_content = None
             
-            # Step 3-4: Fetch content based on classification
+            # Step 3-4: Fetch content based on classification with retry logic
             if classification.classification == "static":
-                try:
-                    # Try static scraping first
-                    page_content = self.static_scraper.fetch(url)
-                    logger.info(f"Static fetch successful for {url}")
-                except Exception as e:
-                    logger.warning(f"Static fetch failed for {url}, trying dynamic: {e}")
-                    try:
-                        # Fallback to dynamic scraping
-                        page_content = fetch_dynamic(url)
-                        logger.info(f"Dynamic fallback successful for {url}")
-                    except Exception as e2:
-                        logger.error(f"Both static and dynamic fetch failed for {url}: {e2}")
-                        return None
+                page_content = self._fetch_with_retry(url, "static", self.max_retries if self.enable_retry else 0)
             else:
-                try:
-                    # Use dynamic scraping for dynamic pages
-                    page_content = fetch_dynamic(url)
-                    logger.info(f"Dynamic fetch successful for {url}")
-                except Exception as e:
-                    logger.error(f"Dynamic fetch failed for {url}: {e}")
-                    return None
+                page_content = self._fetch_with_retry(url, "dynamic", self.max_retries if self.enable_retry else 0)
             
             if not page_content:
                 return None
@@ -171,6 +162,71 @@ class WebScraperOrchestrator:
         except Exception as e:
             logger.error(f"Failed to process URL {url}: {e}")
             return None
+    
+    def _fetch_with_retry(self, url: str, fetch_type: str, max_retries: int) -> Optional[Any]:
+        """
+        Fetch content with retry logic for network errors
+        
+        Args:
+            url: URL to fetch
+            fetch_type: "static" or "dynamic"
+            max_retries: Maximum number of retries
+            
+        Returns:
+            PageContent or None if all retries failed
+        """
+        for attempt in range(max_retries + 1):
+            try:
+                if fetch_type == "static":
+                    page_content = self.static_scraper.fetch(url)
+                    logger.info(f"Static fetch successful for {url}")
+                    return page_content
+                else:
+                    page_content = fetch_dynamic(url)
+                    logger.info(f"Dynamic fetch successful for {url}")
+                    return page_content
+                    
+            except Exception as e:
+                error_str = str(e).lower()
+                is_network_error = any(network_error in error_str for network_error in [
+                    'net::err_http2_protocol_error', 'net::err_name_not_resolved', 
+                    'timeout', 'connection', 'network', 'dns', 'refused'
+                ])
+                
+                if is_network_error:
+                    if attempt < max_retries:
+                        # Calculate exponential backoff delay
+                        delay = min(2 ** attempt, 3)  # Max 3 seconds
+                        logger.warning(f"Network error for {url} (attempt {attempt + 1}/{max_retries + 1}), retrying in {delay}s: {e}")
+                        time.sleep(delay)
+                        continue
+                    else:
+                        logger.warning(f"Network error for {url} after {max_retries + 1} attempts, skipping: {e}")
+                        return None
+                else:
+                    # Non-network error, don't retry
+                    if fetch_type == "static":
+                        logger.warning(f"Static fetch failed for {url}, trying dynamic: {e}")
+                        # Try dynamic as fallback
+                        try:
+                            page_content = fetch_dynamic(url)
+                            logger.info(f"Dynamic fallback successful for {url}")
+                            return page_content
+                        except Exception as e2:
+                            error_str2 = str(e2).lower()
+                            if any(network_error in error_str2 for network_error in [
+                                'net::err_http2_protocol_error', 'net::err_name_not_resolved', 
+                                'timeout', 'connection', 'network', 'dns', 'refused'
+                            ]):
+                                logger.warning(f"Network error for {url} during dynamic fallback, skipping: {e2}")
+                            else:
+                                logger.error(f"Both static and dynamic fetch failed for {url}: {e2}")
+                            return None
+                    else:
+                        logger.error(f"Dynamic fetch failed for {url}: {e}")
+                        return None
+        
+        return None
     
 
     def save_debug_results(self, url: str, page_html: str = None, sections: list = None):
@@ -758,7 +814,8 @@ class WebScraperOrchestrator:
                             batch_size: int = 50,
                             export_format: str = "json",
                             export_path: str = None,
-                            generate_final_leads: bool = True) -> Dict[str, Any]:
+                            generate_final_leads: bool = True,
+                            icp_identifier: str = 'default') -> Dict[str, Any]:
         """
         Run the complete pipeline from URLs to exported leads
         
@@ -769,6 +826,7 @@ class WebScraperOrchestrator:
             export_format: Format for export (json, csv, excel)
             export_path: Path for exported file
             generate_final_leads: Whether to generate final leads JSON
+            icp_identifier: ICP identifier for tracking which ICP this data belongs to
             
         Returns:
             Dictionary with pipeline results and statistics
@@ -841,6 +899,10 @@ class WebScraperOrchestrator:
                     # Add domain information
                     if lead_dict.get('source_url'):
                         lead_dict['domain'] = urlparse(lead_dict['source_url']).netloc
+                    
+                    # Add ICP identifier
+                    lead_dict['icp_identifier'] = icp_identifier
+                    
                     leads_data.append(lead_dict)
                 
                 mongodb_stats = self.mongodb_manager.insert_batch_leads(leads_data, 'web')
@@ -890,6 +952,8 @@ def main():
     parser.add_argument("--disable-ai", action="store_true", help="Disable AI enhancement")
     parser.add_argument("--disable-quality", action="store_true", help="Disable data quality engine")
     parser.add_argument("--disable-final-leads", action="store_true", help="Disable final leads generation")
+    parser.add_argument("--disable-retry", action="store_true", help="Disable retry mechanism for network errors")
+    parser.add_argument("--max-retries", type=int, default=2, help="Maximum number of retries for network errors")
     parser.add_argument("--output-stats", help="Path to save pipeline statistics JSON")
     
     args = parser.parse_args()
@@ -903,7 +967,9 @@ def main():
         enable_ai=not args.disable_ai,
         enable_quality_engine=not args.disable_quality,
         max_workers=args.max_workers,
-        delay_between_requests=args.delay
+        delay_between_requests=args.delay,
+        max_retries=args.max_retries,
+        enable_retry=not args.disable_retry
     )
     
     try:

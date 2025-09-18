@@ -49,7 +49,6 @@ class BrowserManager:
                 '--no-sandbox',
                 '--disable-blink-features=AutomationControlled',
                 '--disable-dev-shm-usage',
-                '--disable-web-security',
                 '--disable-features=VizDisplayCompositor',
                 '--disable-extensions',
                 '--disable-plugins',
@@ -106,28 +105,122 @@ class BrowserManager:
         if hasattr(self, 'playwright'):
             await self.playwright.stop()
             
-    async def navigate_to(self, url: str, wait_time: int = 3) -> None:
-        """Navigate to URL with human-like delays and anti-detection measures"""
+    async def navigate_to(self, url: str, wait_time: int = 3, max_retries: int = 3) -> None:
+        """Navigate to URL with human-like delays, anti-detection measures, and robust retry logic"""
         if not self.page:
             raise RuntimeError("Browser not started. Call start() first.")
         
-        # Apply network obfuscation delay
-        if self.enable_anti_detection and self.anti_detection:
-            delay = await self.anti_detection.calculate_request_delay()
-            await asyncio.sleep(delay)
-        else:
-            # Random delay to mimic human behavior
-            await asyncio.sleep(random.uniform(1, 3))
+        last_exception = None
         
-        await self.page.goto(url, wait_until='domcontentloaded')
+        for attempt in range(max_retries):
+            try:
+                # Apply network obfuscation delay with exponential backoff
+                if self.enable_anti_detection and self.anti_detection:
+                    delay = await self.anti_detection.calculate_request_delay()
+                    # Add exponential backoff for retries
+                    if attempt > 0:
+                        delay *= (2 ** attempt)  # Exponential backoff
+                    await asyncio.sleep(delay)
+                else:
+                    # Random delay to mimic human behavior with backoff
+                    base_delay = random.uniform(1, 3)
+                    if attempt > 0:
+                        base_delay *= (2 ** attempt)  # Exponential backoff
+                    await asyncio.sleep(base_delay)
+                
+                # Enhanced navigation with better error handling
+                navigation_options = {
+                    'wait_until': 'domcontentloaded',
+                    'timeout': 45000,  # Increased timeout
+                }
+                
+                # Add retry-specific options
+                if attempt > 0:
+                    navigation_options['wait_until'] = 'networkidle'  # More thorough wait on retries
+                    navigation_options['timeout'] = 60000  # Longer timeout for retries
+                
+                await self.page.goto(url, **navigation_options)
+                
+                # Update request count for anti-detection tracking
+                if self.enable_anti_detection and self.anti_detection:
+                    self.anti_detection.request_count += 1
+                    self.anti_detection.last_request_time = time.time()
+                
+                # Wait for page to load
+                await asyncio.sleep(wait_time)
+                return  # Success, exit retry loop
+                
+            except Exception as e:
+                last_exception = e
+                error_msg = str(e)
+                
+                # Check if it's a network error that we should retry
+                if any(err in error_msg for err in [
+                    "ERR_CONNECTION_RESET", "net::ERR_", "ERR_NETWORK_CHANGED", 
+                    "ERR_INTERNET_DISCONNECTED", "ERR_CONNECTION_REFUSED",
+                    "ERR_CONNECTION_TIMED_OUT", "ERR_NAME_NOT_RESOLVED"
+                ]):
+                    print(f"⚠️ Network error navigating to {url} (attempt {attempt + 1}/{max_retries}): {error_msg}")
+                    
+                    if attempt < max_retries - 1:
+                        # Enhanced retry logic for server environments
+                        base_delay = 5.0  # Start with 5 seconds
+                        retry_delay = min(60, base_delay * (2 ** attempt) + random.uniform(2, 8))  # Cap at 60 seconds with jitter
+                        print(f"   Retrying in {retry_delay:.1f} seconds...")
+                        await asyncio.sleep(retry_delay)
+                        
+                        # Try multiple recovery strategies
+                        recovery_success = False
+                        
+                        # Strategy 1: Try to refresh the page context
+                        try:
+                            await self.page.reload(wait_until='domcontentloaded', timeout=30000)
+                            recovery_success = True
+                            print(f"   ✓ Page reload successful")
+                        except Exception as reload_error:
+                            print(f"   ⚠️ Page reload failed: {reload_error}")
+                        
+                        # Strategy 2: If reload failed, try creating a new page
+                        if not recovery_success:
+                            try:
+                                await self.page.close()
+                                self.page = await self.context.new_page()
+                                print(f"   ✓ New page created")
+                                recovery_success = True
+                            except Exception as new_page_error:
+                                print(f"   ⚠️ New page creation failed: {new_page_error}")
+                        
+                        # Strategy 3: If still failing, try recreating context
+                        if not recovery_success and attempt >= 2:
+                            try:
+                                await self.context.close()
+                                self.context = await self.browser.new_context(
+                                    user_agent=self.ua.random,
+                                    viewport={'width': 1920, 'height': 1080},
+                                    locale='en-US',
+                                    timezone_id='America/New_York',
+                                )
+                                self.page = await self.context.new_page()
+                                print(f"   ✓ New context created")
+                                recovery_success = True
+                            except Exception as context_error:
+                                print(f"   ⚠️ Context recreation failed: {context_error}")
+                        
+                        if recovery_success:
+                            continue
+                        else:
+                            print(f"   ❌ All recovery strategies failed")
+                    else:
+                        print(f"❌ Max retries reached for {url}")
+                        break
+                else:
+                    # Non-network error, don't retry
+                    print(f"❌ Non-network error navigating to {url}: {error_msg}")
+                    break
         
-        # Update request count for anti-detection tracking
-        if self.enable_anti_detection and self.anti_detection:
-            self.anti_detection.request_count += 1
-            self.anti_detection.last_request_time = time.time()
-        
-        # Wait for page to load
-        await asyncio.sleep(wait_time)
+        # If we get here, all retries failed
+        if last_exception:
+            raise last_exception
         
     async def close_instagram_popup(self) -> bool:
         """Attempt to close Instagram login/signup popup"""

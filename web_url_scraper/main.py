@@ -2,14 +2,15 @@ import sys
 
 from web_url_scraper.config import validate_config, get_config_summary 
 from web_url_scraper.google_service import search_multiple_pages, filter_valid_urls, detect_url_type
-from web_url_scraper.database_service import test_database_connection, setup_database_indexes, save_multiple_urls, get_urls_by_query, get_database_stats
+from web_url_scraper.database_service import test_database_connection, setup_database_indexes, save_multiple_urls, initialize_database, get_urls_by_query, get_database_stats
 
-def main(search_query):
+def main(search_query, icp_identifier='default'):
     """
     Main execution function for the Google URL scraper.
     
     Args:
         search_query (str): The search query to process
+        icp_identifier (str): ICP identifier for tracking
     """
     try:
         # Input validation
@@ -25,7 +26,7 @@ def main(search_query):
         search_query = search_query.strip()
         print(f"Starting search for: {search_query}")
         
-        # Search execution
+        # Search execution: get list of url data dictionaries {url, title, snippet}
         print("Executing Google search...")
         all_results = search_multiple_pages(search_query)
         
@@ -46,8 +47,11 @@ def main(search_query):
         print(f"Valid URLs to process: {len(valid_urls)}")
         
         # Database storage
+        # Initialize ONCE at the start of your application
+        initialize_database()
+        print("Database ready!")
         print("Saving URLs to database...")
-        stats = save_multiple_urls(valid_urls, search_query)
+        stats = save_multiple_urls(valid_urls, search_query, icp_identifier)
         
         # Get URL type breakdown for the current search
         url_type_breakdown = {}

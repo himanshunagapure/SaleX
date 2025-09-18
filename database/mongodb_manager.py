@@ -5,6 +5,7 @@ Handles database connections and operations for all scrapers
 
 import os
 import json
+import re
 from datetime import datetime
 from typing import Dict, List, Any, Optional, Union
 from pymongo import MongoClient
@@ -21,7 +22,7 @@ class MongoDBManager:
     
     def __init__(self, 
                  connection_string: str = None,
-                 database_name: str = "lead_generation_db",
+                 database_name: str = "aiqod-dev",
                  max_pool_size: int = 100):
         """
         Initialize MongoDB connection
@@ -71,60 +72,78 @@ class MongoDBManager:
             raise
     
     def _create_indexes(self):
-        """Create indexes for better query performance"""
+        """Create indexes for better query performance
+        
+        Note: This will continue execution even if some indexes fail to be created
+        due to insufficient permissions.
+        """
+        def safe_create_index(collection, index_spec, **kwargs):
+            """Safely create a single index with error handling"""
+            try:
+                collection.create_index(index_spec, **kwargs)
+                index_name = kwargs.get('name', str(index_spec))
+                logger.debug(f"✅ Created index {index_name} on {collection.name}")
+                return True
+            except Exception as e:
+                index_name = kwargs.get('name', str(index_spec))
+                logger.warning(f"⚠️ Failed to create index {index_name} on {collection.name}: {str(e)}")
+                return False
+
         try:
             # Instagram collection indexes
             instagram_collection = self.db[self.collections['instagram']]
-            instagram_collection.create_index([("url", 1)], unique=True)
-            instagram_collection.create_index([("username", 1)])
-            instagram_collection.create_index([("content_type", 1)])
-            instagram_collection.create_index([("scraped_at", -1)])
+            safe_create_index(instagram_collection, [("url", 1)], unique=True, name="url_1")
+            safe_create_index(instagram_collection, [("username", 1)], name="username_1")
+            safe_create_index(instagram_collection, [("content_type", 1)], name="content_type_1")
+            safe_create_index(instagram_collection, [("scraped_at", -1)], name="scraped_at_-1")
             
             # LinkedIn collection indexes
             linkedin_collection = self.db[self.collections['linkedin']]
-            linkedin_collection.create_index([("url", 1)], unique=True)
-            linkedin_collection.create_index([("username", 1)])
-            linkedin_collection.create_index([("url_type", 1)])
-            linkedin_collection.create_index([("scraping_timestamp", -1)])
+            safe_create_index(linkedin_collection, [("url", 1)], unique=True, name="url_1")
+            safe_create_index(linkedin_collection, [("username", 1)], name="username_1")
+            safe_create_index(linkedin_collection, [("url_type", 1)], name="url_type_1")
+            safe_create_index(linkedin_collection, [("scraping_timestamp", -1)], name="scraping_timestamp_-1")
             
             # Web collection indexes
             web_collection = self.db[self.collections['web']]
             try:
                 web_collection.drop_index([("url", 1)])
-            except:
+            except Exception:
                 pass
-            web_collection.create_index([("source_url", 1)]) # Non-unique
-            web_collection.create_index([("domain", 1)])
-            web_collection.create_index([("scraped_at", -1)])
+            safe_create_index(web_collection, [("source_url", 1)], name="source_url_1")
+            safe_create_index(web_collection, [("domain", 1)], name="domain_1")
+            safe_create_index(web_collection, [("scraped_at", -1)], name="scraped_at_-1")
             
             # YouTube collection indexes
             youtube_collection = self.db[self.collections['youtube']]
-            youtube_collection.create_index([("url", 1)], unique=True)
-            youtube_collection.create_index([("channel_name", 1)])
-            youtube_collection.create_index([("content_type", 1)])
-            youtube_collection.create_index([("scraped_at", -1)])
+            safe_create_index(youtube_collection, [("url", 1)], unique=True, name="url_1")
+            safe_create_index(youtube_collection, [("channel_name", 1)], name="channel_name_1")
+            safe_create_index(youtube_collection, [("content_type", 1)], name="content_type_1")
+            safe_create_index(youtube_collection, [("scraped_at", -1)], name="scraped_at_-1")
 
-            # NEW: Unified collection indexes
+            # Unified collection indexes
             unified_collection = self.db[self.collections['unified']]
-            unified_collection.create_index([("url", 1)], unique=True)
-            unified_collection.create_index([("platform", 1)])
-            unified_collection.create_index([("content_type", 1)])
-            unified_collection.create_index([("profile.username", 1)])
-            unified_collection.create_index([("contact.emails", 1)])
-            unified_collection.create_index([("metadata.scraped_at", -1)])
-            unified_collection.create_index([("source", 1)])
+            safe_create_index(unified_collection, [("url", 1)], unique=True, name="url_1")
+            safe_create_index(unified_collection, [("platform", 1)], name="platform_1")
+            safe_create_index(unified_collection, [("content_type", 1)], name="content_type_1")
+            safe_create_index(unified_collection, [("profile.username", 1)], name="profile.username_1")
+            safe_create_index(unified_collection, [("contact.emails", 1)], name="contact.emails_1")
+            safe_create_index(unified_collection, [("metadata.scraped_at", -1)], name="metadata.scraped_at_-1")
+            safe_create_index(unified_collection, [("source", 1)], name="source_1")
+            
             # Additional field indexes for better query performance
-            unified_collection.create_index([("industry", 1)])
-            unified_collection.create_index([("company_name", 1)])
-            unified_collection.create_index([("lead_category", 1)])
-            unified_collection.create_index([("lead_sub_category", 1)])
-            unified_collection.create_index([("company_type", 1)])
-            unified_collection.create_index([("bdr", 1)])
-
-            logger.info("✅ Database indexes created successfully")
+            safe_create_index(unified_collection, [("industry", 1)], name="industry_1")
+            safe_create_index(unified_collection, [("company_name", 1)], name="company_name_1")
+            safe_create_index(unified_collection, [("lead_category", 1)], name="lead_category_1")
+            safe_create_index(unified_collection, [("lead_sub_category", 1)], name="lead_sub_category_1")
+            safe_create_index(unified_collection, [("company_type", 1)], name="company_type_1")
+            safe_create_index(unified_collection, [("bdr", 1)], name="bdr_1")
+            safe_create_index(unified_collection, [("icp_identifier", 1)], name="icp_identifier_1")
+            
+            logger.info("✅ Index creation process completed. Some indexes may not have been created due to permissions.")
             
         except Exception as e:
-            logger.warning(f"⚠️ Failed to create some indexes: {e}")
+            logger.warning(f"⚠️ Error during index creation process: {e}")
 
     def insert_unified_lead(self, lead_data: Dict[str, Any]) -> bool:
         """
@@ -155,6 +174,16 @@ class MongoDBManager:
             
             # Add/update metadata
             lead_data['metadata']['scraped_at'] = datetime.utcnow()
+            
+            # Only save "profile" type leads to unified_leads collection
+            content_type = lead_data.get('content_type', '').lower()
+            if content_type != 'profile':
+                logger.info(f"ℹ️ Skipped non-profile lead (content_type: {content_type}): {lead_data.get('url', 'unknown')}")
+                return False
+            
+            # Ensure ICP identifier exists
+            if 'icp_identifier' not in lead_data:
+                lead_data['icp_identifier'] = 'default'
             
             # Insert into unified collection
             result = self.db[self.collections['unified']].insert_one(lead_data)
@@ -208,6 +237,16 @@ class MongoDBManager:
                 
                 # Add metadata
                 lead_data['metadata']['scraped_at'] = datetime.utcnow()
+                
+                # Only save "profile" type leads to unified_leads collection
+                content_type = lead_data.get('content_type', '').lower()
+                if content_type != 'profile':
+                    logger.info(f"ℹ️ Skipped non-profile lead (content_type: {content_type}): {lead_data.get('url', 'unknown')}")
+                    continue
+                
+                # Ensure ICP identifier exists
+                if 'icp_identifier' not in lead_data:
+                    lead_data['icp_identifier'] = 'default'
                 
                 # Insert into unified collection
                 result = self.db[self.collections['unified']].insert_one(lead_data)
@@ -632,41 +671,88 @@ class MongoDBManager:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close_connection()
 
-    def transform_instagram_to_unified(self, instagram_data: Dict[str, Any]) -> Dict[str, Any]:
+    def _validate_instagram_lead(self, instagram_data: Dict[str, Any]) -> bool:
+        """
+        Validate Instagram lead data before saving to unified_leads collection
+        
+        Validation rules:
+        1. If email or phone is present, the lead is valid
+        2. If email and phone are both empty, check if username, full_name, and bio are present
+        3. If these are also missing, skip the lead
+        
+        Args:
+            instagram_data: Instagram lead data dictionary
+            
+        Returns:
+            bool: True if lead is valid, False if should be skipped
+        """
+        try:
+            # Check if email or phone is present
+            business_email = instagram_data.get('business_email', '').strip()
+            business_phone = instagram_data.get('business_phone_number', '').strip()
+            
+            if business_email or business_phone:
+                logger.debug(f"✅ Instagram lead valid - has contact info: {instagram_data.get('username', 'unknown')}")
+                return True
+            
+            # If no contact info, check profile information
+            username = instagram_data.get('username', '').strip()
+            full_name = instagram_data.get('full_name', '').strip()
+            bio = instagram_data.get('biography', '').strip()
+            
+            if username and full_name and bio:
+                logger.debug(f"✅ Instagram lead valid - has profile info: {username}")
+                return True
+            
+            # Lead doesn't meet validation criteria
+            logger.warning(f"⚠️ Instagram lead invalid - insufficient data: {username or 'unknown'}")
+            logger.warning(f"   - Email: {business_email or 'None'}")
+            logger.warning(f"   - Phone: {business_phone or 'None'}")
+            logger.warning(f"   - Username: {username or 'None'}")
+            logger.warning(f"   - Full name: {full_name or 'None'}")
+            logger.warning(f"   - Bio: {bio or 'None'}")
+            return False
+            
+        except Exception as e:
+            logger.error(f"❌ Error validating Instagram lead: {e}")
+            return False
+
+    def transform_instagram_to_unified(self, instagram_data: Dict[str, Any], icp_identifier: str = 'default') -> Dict[str, Any]:
         """Transform Instagram data to unified schema"""
         unified_data = {
             "url": instagram_data.get('url', ""),
             "platform": "instagram",
             "content_type": instagram_data.get('content_type', ""),
             "source": "instagram-scraper",
+            "icp_identifier": icp_identifier,
             "profile": {
-                "username": instagram_data.get('username'),
+                "username": instagram_data.get('username', ""),
                 "full_name": instagram_data.get('full_name', ""),
                 "bio": instagram_data.get('biography', ""),
-                "location": None,
+                "location": "",
                 "job_title": instagram_data.get('business_category_name', ""),
-                "employee_count": None
+                "employee_count": ""
             },
             "contact": {
                 "emails": [instagram_data.get('business_email')] if instagram_data.get('business_email') else [],
                 "phone_numbers": [instagram_data.get('business_phone_number')] if instagram_data.get('business_phone_number') else [],
-                "address": None,
+                "address": "",
                 "websites": [],
                 "social_media_handles": {
-                    "instagram": instagram_data.get('username'),
-                    "twitter": None,
-                    "facebook": None,
-                    "linkedin": None,
-                    "youtube": None,
-                    "tiktok": None,
+                    "instagram": instagram_data.get('username', ""),
+                    "twitter": "",
+                    "facebook": "",
+                    "linkedin": "",
+                    "youtube": "",
+                    "tiktok": "",
                     "other": []
                 },
                 "bio_links": instagram_data.get('bio_links', [])
             },
             "content": {
                 "caption": instagram_data.get('caption', ""),
-                "upload_date": None,
-                "channel_name": None,
+                "upload_date": "",
+                "channel_name": "",
                 "author_name": instagram_data.get('username', "")
             },
             "metadata": {
@@ -727,7 +813,7 @@ class MongoDBManager:
         # Check if full_name is empty or matches invalid patterns
         return not full_name or full_name in invalid_names
 
-    def transform_linkedin_to_unified(self, linkedin_data: Dict[str, Any]) -> Dict[str, Any]:
+    def transform_linkedin_to_unified(self, linkedin_data: Dict[str, Any], icp_identifier: str = 'default') -> Dict[str, Any]:
         """Transform LinkedIn data to unified schema"""
         # Skip if invalid data
         full_name = linkedin_data.get('author_name') or linkedin_data.get('full_name')
@@ -739,13 +825,14 @@ class MongoDBManager:
             "platform": "linkedin", 
             "content_type": self._map_linkedin_content_type(linkedin_data.get('url_type', '')),
             "source": "linkedin-scraper",
+            "icp_identifier": icp_identifier,
             "profile": {
                 "username": linkedin_data.get('username', ""),
                 "full_name": linkedin_data.get('full_name') or linkedin_data.get('author_name', ""),
                 "bio": linkedin_data.get('about') or linkedin_data.get('about_us', ""),
                 "location": linkedin_data.get('location', ""),
                 "job_title": linkedin_data.get('job_title', ""),
-                "employee_count": str(linkedin_data.get('employee_count')) if linkedin_data.get('employee_count') else None
+                "employee_count": str(linkedin_data.get('employee_count')) if linkedin_data.get('employee_count') else ""
             },
             "contact": {
                 "emails": [],
@@ -753,12 +840,12 @@ class MongoDBManager:
                 "address": linkedin_data.get('address', ""),
                 "websites": [linkedin_data.get('website')] if linkedin_data.get('website') else [],
                 "social_media_handles": {
-                    "instagram": None,
-                    "twitter": None,
-                    "facebook": None,
-                    "linkedin": linkedin_data.get('username') or linkedin_data.get('author_url'),
-                    "youtube": None,
-                    "tiktok": None,
+                    "instagram": "",
+                    "twitter": "",
+                    "facebook": "",
+                    "linkedin": linkedin_data.get('username') or linkedin_data.get('author_url', ""),
+                    "youtube": "",
+                    "tiktok": "",
                     "other": []
                 },
                 "bio_links": []
@@ -766,8 +853,8 @@ class MongoDBManager:
             "content": {
                 "caption": linkedin_data.get('headline', ""),
                 "upload_date": linkedin_data.get('date_published', ""),
-                "channel_name": None,
-                "author_name": linkedin_data.get('author_name') or linkedin_data.get('full_name')
+                "channel_name": "",
+                "author_name": linkedin_data.get('author_name') or linkedin_data.get('full_name', "")
             },
             "metadata": {
                 "scraped_at": datetime.utcnow(),
@@ -789,16 +876,16 @@ class MongoDBManager:
         
         return self._clean_unified_data(unified_data)
 
-    def transform_youtube_to_unified(self, youtube_data: Dict[str, Any]) -> Dict[str, Any]:
+    def transform_youtube_to_unified(self, youtube_data: Dict[str, Any], icp_identifier: str = 'default') -> Dict[str, Any]:
         """Transform YouTube data to unified schema"""
          # Extract social media handles from the nested structure
         social_media_data = youtube_data.get('social_media_handles', {})
         
-        # Helper function to extract first handle from a list or return None
+        # Helper function to extract first handle from a list or return empty string
         def get_first_handle(handles_list):
             if handles_list and isinstance(handles_list, list) and len(handles_list) > 0:
                 return handles_list[0].get('username', '') if isinstance(handles_list[0], dict) else handles_list[0]
-            return None
+            return ""
         
         # Helper function to extract all URLs from social media handles
         def get_bio_links():
@@ -815,18 +902,19 @@ class MongoDBManager:
             "platform": "youtube",
             "content_type": youtube_data.get('content_type', ""),
             "source": "youtube-scraper",
+            "icp_identifier": icp_identifier,
             "profile": {
                 "username": "",
                 "full_name": youtube_data.get('channel_name', ""),
                 "bio": youtube_data.get('description', ""),
-                "location": None,
-                "job_title": None,
-                "employee_count": None
+                "location": "",
+                "job_title": "",
+                "employee_count": ""
             },
             "contact": {
                 "emails": [youtube_data.get('email')] if youtube_data.get('email') else [],
                 "phone_numbers": [],
-                "address": None,
+                "address": "",
                 "websites": [],
                 "social_media_handles": {
                     "instagram": get_first_handle(social_media_data.get('instagram')),
@@ -842,8 +930,8 @@ class MongoDBManager:
             "content": {
                 "caption": youtube_data.get('title',""),
                 "upload_date": youtube_data.get('upload_date',""),
-                "channel_name": youtube_data.get('channel_name'),
-                "author_name": None
+                "channel_name": youtube_data.get('channel_name', ""),
+                "author_name": ""
             },
             "metadata": {
                 "scraped_at": datetime.utcnow(),
@@ -865,7 +953,7 @@ class MongoDBManager:
         
         return self._clean_unified_data(unified_data)
 
-    def transform_web_to_unified(self, web_data: Dict[str, Any]) -> Dict[str, Any]:
+    def transform_web_to_unified(self, web_data: Dict[str, Any], icp_identifier: str = 'default') -> Dict[str, Any]:
         """Transform web scraper data to unified schema"""
         
         # Helper function to extract emails from various sources
@@ -960,6 +1048,7 @@ class MongoDBManager:
             "platform": "web",
             "content_type": "profile",  # Web scraper typically extracts company/profile data
             "source": "web-scraper",
+            "icp_identifier": icp_identifier,
             "profile": {
                 "username": "",  # Web scraper doesn't typically have usernames
                 "full_name": get_value_with_fallback(['organization_info', 'primary_name'], 'business_name'),
@@ -971,7 +1060,7 @@ class MongoDBManager:
             "contact": {
                 "emails": extract_emails(web_data),
                 "phone_numbers": extract_phones(web_data),
-                "address": get_value_with_fallback(['organization_info', 'address'], 'address'),
+                "address": get_value_with_fallback(['organization_info', 'location'], ''),  # Only from AI, empty string as fallback
                 "websites": [web_data.get('source_url')] if web_data.get('source_url') else [],
                 "social_media_handles": {
                     "instagram": social_media.get('instagram'),
@@ -1072,9 +1161,16 @@ class MongoDBManager:
 
     def _clean_unified_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Clean unified data by removing empty nested objects and None values where appropriate"""
-        # Clean profile section
+        # Clean profile section - but keep essential fields as empty strings if None
         if data.get('profile'):
-            data['profile'] = {k: v for k, v in data['profile'].items() if v is not None and v != ''}
+            profile = data['profile']
+            # Essential fields that should always exist
+            essential_profile_fields = ['username', 'full_name', 'bio', 'location', 'job_title', 'employee_count']
+            for field in essential_profile_fields:
+                if field not in profile or profile[field] is None:
+                    profile[field] = ''
+            # Remove other None/empty values
+            data['profile'] = {k: v for k, v in profile.items() if v is not None and v != '' or k in essential_profile_fields}
         
         # Clean contact section
         if data.get('contact'):
@@ -1172,13 +1268,108 @@ class MongoDBManager:
             logger.error(f"❌ Failed to ensure schema compliance: {e}")
             return {'error': str(e)}
 
-    def insert_and_transform_to_unified(self, source_data: List[Dict[str, Any]], platform: str) -> Dict[str, int]:
+    def _is_duplicate_lead(self, unified_data: Dict[str, Any]) -> bool:
         """
-        Transform and insert leads into unified collection
+        Check if a lead is a duplicate based on the specified criteria
+        
+        Args:
+            unified_data: Transformed unified lead data
+            
+        Returns:
+            bool: True if duplicate, False if unique
+        """
+        try:
+            # Extract contact information
+            contact = unified_data.get('contact', {})
+            emails = contact.get('emails', [])
+            phones = contact.get('phone_numbers', [])
+            
+            # Clean and normalize emails and phones
+            emails = [email.strip().lower() for email in emails if email and isinstance(email, str)]
+            phones = [phone.strip() for phone in phones if phone and isinstance(phone, str)]
+            
+            # Check for duplicates based on contact information
+            if emails or phones:
+                # Build query for contact-based duplicates
+                contact_query = {"$or": []}
+                
+                # Check email duplicates
+                if emails:
+                    contact_query["$or"].append({
+                        "contact.emails": {"$in": emails}
+                    })
+                
+                # Check phone duplicates
+                if phones:
+                    contact_query["$or"].append({
+                        "contact.phone_numbers": {"$in": phones}
+                    })
+                
+                # Check if any existing lead matches
+                existing_lead = self.db[self.collections['unified']].find_one(contact_query)
+                if existing_lead:
+                    logger.debug(f"🔍 Found duplicate lead by contact info: {existing_lead.get('_id')}")
+                    return True
+            
+            # If no contact info, check by profile + company info
+            else:
+                profile = unified_data.get('profile', {})
+                full_name = profile.get('full_name')
+                full_name = full_name.strip() if full_name and isinstance(full_name, str) else ''
+                url = unified_data.get('url')
+                url = url.strip() if url and isinstance(url, str) else ''
+                company_name = unified_data.get('company_name')
+                company_name = company_name.strip() if company_name and isinstance(company_name, str) else ''
+                company_type = unified_data.get('company_type')
+                company_type = company_type.strip() if company_type and isinstance(company_type, str) else ''
+                
+                # Only check if we have meaningful data
+                if not (full_name or url or company_name):
+                    return False
+                
+                # Build query for profile-based duplicates
+                profile_query = {"$and": []}
+                
+                if full_name:
+                    profile_query["$and"].append({
+                        "profile.full_name": {"$regex": f"^{re.escape(full_name)}$", "$options": "i"}
+                    })
+                
+                if url:
+                    profile_query["$and"].append({
+                        "url": {"$regex": f"^{re.escape(url)}$", "$options": "i"}
+                    })
+                
+                if company_name:
+                    profile_query["$and"].append({
+                        "company_name": {"$regex": f"^{re.escape(company_name)}$", "$options": "i"}
+                    })
+                
+                if company_type:
+                    profile_query["$and"].append({
+                        "company_type": {"$regex": f"^{re.escape(company_type)}$", "$options": "i"}
+                    })
+                
+                # Check if any existing lead matches
+                existing_lead = self.db[self.collections['unified']].find_one(profile_query)
+                if existing_lead:
+                    logger.debug(f"🔍 Found duplicate lead by profile info: {existing_lead.get('_id')}")
+                    return True
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"❌ Error checking for duplicate lead: {e}")
+            return False  # If error, assume not duplicate to avoid data loss
+
+    def insert_and_transform_to_unified(self, source_data: List[Dict[str, Any]], platform: str, icp_identifier: str = 'default') -> Dict[str, int]:
+        """
+        Transform and insert leads into unified collection with duplication check
         
         Args:
             source_data: List of platform-specific lead data
             platform: Source platform ('instagram', 'linkedin', 'youtube', 'web')
+            icp_identifier: ICP identifier to track which ICP this data belongs to
             
         Returns:
             Dict with success and failure counts
@@ -1201,11 +1392,31 @@ class MongoDBManager:
         
         for data in source_data:
             try:
+                # For Instagram, validate lead data before transformation
+                if platform == 'instagram':
+                    if not self._validate_instagram_lead(data):
+                        logger.warning(f"⚠️ Skipped invalid Instagram lead: {data.get('username', 'unknown')}")
+                        failure_count += 1
+                        continue
+                
                 # Transform to unified schema
-                unified_data = transform_func(data)
+                unified_data = transform_func(data, icp_identifier)
                 
                 if not unified_data:  # 👈 Skip invalid ones
                     logger.warning(f"⚠️ Skipped invalid {platform} data: {data.get('full_name') or data.get('author_name')}")
+                    failure_count += 1
+                    continue
+                
+                # Only save "profile" type leads to unified_leads collection
+                content_type = unified_data.get('content_type', '').lower()
+                if content_type != 'profile':
+                    logger.info(f"ℹ️ Skipped non-profile lead (content_type: {content_type}): {unified_data.get('url', 'unknown')}")
+                    continue
+                
+                # Check for duplicates before inserting
+                if self._is_duplicate_lead(unified_data):
+                    duplicate_count += 1
+                    logger.warning(f"⚠️ Duplicate lead detected and skipped: {unified_data.get('url', 'unknown')}")
                     continue
                     
                 # Insert into unified collection
@@ -1227,6 +1438,141 @@ class MongoDBManager:
             'failure_count': failure_count,
             'total_processed': len(source_data)
         }
+    
+    def get_unified_leads_without_contacts(self, limit: int = 0) -> List[Dict[str, Any]]:
+        """Get unified leads that don't have contact information"""
+        try:
+            # Query for leads without emails or phone numbers
+            query = {
+                "$or": [
+                    {"contact.emails": {"$exists": False}},
+                    {"contact.emails": {"$size": 0}},
+                    {"contact.phone_numbers": {"$exists": False}},
+                    {"contact.phone_numbers": {"$size": 0}},
+                    {"contact": {"$exists": False}}
+                ]
+            }
+            
+            cursor = self.db[self.collections['unified']].find(query)
+            if limit > 0:
+                cursor = cursor.limit(limit)
+                
+            return list(cursor)
+        except Exception as e:
+            logger.error(f"Error fetching leads without contacts: {e}")
+            return []
+    
+    def get_leads_by_icp_identifier(self, icp_identifier: str, limit: int = 100, skip: int = 0) -> List[Dict[str, Any]]:
+        """
+        Get leads from unified collection filtered by ICP identifier
+        
+        Args:
+            icp_identifier: ICP identifier to filter by
+            limit: Maximum number of results
+            skip: Number of results to skip
+            
+        Returns:
+            List of unified lead documents for the specified ICP
+        """
+        try:
+            from bson import ObjectId
+            query = {"icp_identifier": icp_identifier}
+            cursor = self.db[self.collections['unified']].find(query).sort('metadata.scraped_at', -1).skip(skip).limit(limit)
+            leads = []
+            for doc in cursor:
+                doc['_id'] = str(doc['_id'])   # convert ObjectId
+                if 'metadata' in doc and 'scraped_at' in doc['metadata']:
+                    doc['metadata']['scraped_at'] = doc['metadata']['scraped_at'].isoformat()
+                leads.append(doc)
+            return leads
+        except Exception as e:
+            logger.error(f"❌ Failed to get leads by ICP identifier: {e}")
+            return []
+    
+    def get_icp_statistics(self, icp_identifier: str) -> Dict[str, Any]:
+        """
+        Get statistics for a specific ICP identifier
+        
+        Args:
+            icp_identifier: ICP identifier to get statistics for
+            
+        Returns:
+            Dict with statistics for the ICP
+        """
+        try:
+            collection = self.db[self.collections['unified']]
+            
+            # Total leads for this ICP
+            total_leads = collection.count_documents({"icp_identifier": icp_identifier})
+            
+            # Leads by platform
+            platform_stats = {}
+            for platform in ['web', 'instagram', 'linkedin', 'youtube']:
+                count = collection.count_documents({
+                    "icp_identifier": icp_identifier,
+                    "platform": platform
+                })
+                if count > 0:
+                    platform_stats[platform] = count
+            
+            # Leads with contact information
+            leads_with_emails = collection.count_documents({
+                "icp_identifier": icp_identifier,
+                "contact.emails": {"$exists": True, "$ne": [], "$not": {"$size": 0}}
+            })
+            
+            leads_with_phones = collection.count_documents({
+                "icp_identifier": icp_identifier,
+                "contact.phone_numbers": {"$exists": True, "$ne": [], "$not": {"$size": 0}}
+            })
+            
+            # Recent activity (last 24 hours)
+            from datetime import datetime, timedelta
+            yesterday = datetime.utcnow() - timedelta(days=1)
+            recent_leads = collection.count_documents({
+                "icp_identifier": icp_identifier,
+                "metadata.scraped_at": {"$gte": yesterday}
+            })
+            
+            return {
+                "icp_identifier": icp_identifier,
+                "total_leads": total_leads,
+                "platform_breakdown": platform_stats,
+                "leads_with_emails": leads_with_emails,
+                "leads_with_phones": leads_with_phones,
+                "recent_leads_24h": recent_leads,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to get ICP statistics: {e}")
+            return {"error": str(e)}
+    
+    def bulk_update_unified_leads(self, operations: List[Dict]) -> Dict[str, int]:
+        """Perform bulk update operations"""
+        try:
+            from pymongo import UpdateOne
+            
+            bulk_ops = []
+            for op in operations:
+                bulk_ops.append(
+                    UpdateOne(
+                        op["filter"],
+                        op["update"],
+                        upsert=op.get("upsert", False)
+                    )
+                )
+            
+            if bulk_ops:
+                result = self.db[self.collections['unified']].bulk_write(bulk_ops)
+                return {
+                    "matched_count": result.matched_count,
+                    "modified_count": result.modified_count
+                }
+            return {"matched_count": 0, "modified_count": 0}
+        except Exception as e:
+            logger.error(f"Bulk update error: {e}")
+            return {"matched_count": 0, "modified_count": 0}
 
 # Global MongoDB manager instance
 mongodb_manager = None

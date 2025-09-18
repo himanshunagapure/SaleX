@@ -157,7 +157,19 @@ async def fetch_dynamic_async(url: str, wait_for_selector: Optional[str] = None,
 						pass
 			except Exception:
 				pass
-		resp = await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+		try:
+			resp = await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+		except Exception as e:
+			# Check if it's a network-related error
+			error_str = str(e).lower()
+			if any(network_error in error_str for network_error in [
+				'net::err_http2_protocol_error', 'net::err_name_not_resolved', 
+				'timeout', 'connection', 'network', 'dns', 'refused'
+			]):
+				logger.warning(f"Network error accessing {url}: {e}")
+				raise RuntimeError(f"Network error: {e}") from e
+			else:
+				raise
 		# Progressive waits per plan
 		try:
 			await page.wait_for_load_state("networkidle", timeout=timeout_ms // 2)

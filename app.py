@@ -21,6 +21,14 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 # Import the orchestrator from main.py
 from main import LeadGenerationOrchestrator
 from filter_web_lead import MongoDBLeadProcessor
+from contact_scraper import run_optimized_contact_scraper
+# from web.crl import run_web_crawler_async  # Commented out - crl.py removed from flow
+from web_url_scraper.database_service import (
+    get_unprocessed_urls_by_type, 
+    mark_urls_as_processed, 
+    get_available_url_counts,
+    get_urls_by_type_and_icp
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -126,7 +134,7 @@ def run_lead_generation():
         
         # Extract and validate required fields
         icp_data = data.get('icp_data')
-        selected_scrapers = data.get('selected_scrapers', ['web_scraper'])
+        selected_scrapers = data.get('selected_scrapers', ['web_scraper', 'instagram', 'linkedin'])
         
         if not icp_data:
             return jsonify({
@@ -145,12 +153,17 @@ def run_lead_generation():
         # Get orchestrator instance
         orch = get_orchestrator()
         
+        # Generate ICP identifier
+        icp_identifier = orch.generate_icp_identifier(icp_data)
+        logger.info(f"🏷️ Generated ICP identifier: {icp_identifier}")
+        
         # Run the complete pipeline asynchronously
-        result = run_async(run_pipeline_async(orch, icp_data, selected_scrapers))
+        result = run_async(run_pipeline_async(orch, icp_data, selected_scrapers, icp_identifier))
         
         return jsonify({
             "success": True,
             "data": result,
+            "icp_identifier": icp_identifier,
             "message": "Lead generation pipeline completed successfully"
         })
         
@@ -166,15 +179,40 @@ def run_lead_generation():
             "error": f"Pipeline failed: {str(e)}"
         }), 500
 
-async def run_pipeline_async(orch, icp_data, selected_scrapers):
+async def run_pipeline_async(orch, icp_data, selected_scrapers, icp_identifier):
     """
     Run the complete lead generation pipeline asynchronously
     """
     pipeline_start = datetime.now()
     
     try:
-        # Step 1: Generate search queries with Gemini AI
-        logger.info("🤖 Step 1: Generating search queries...")
+        # Step 1: Ensure scraped_urls collection exists
+        logger.info("🗄️ Step 1: Ensuring scraped_urls collection exists...")
+        try:
+            from web_url_scraper.database_service import ensure_collection_exists
+            ensure_collection_exists()
+            logger.info("✅ scraped_urls collection ready")
+        except Exception as e:
+            logger.error(f"❌ Failed to ensure scraped_urls collection exists: {e}")
+        
+        # COMMENTED OUT - crl.py removed from flow
+        # Step 1: Run web crawler for direct URL generation
+        # logger.info("🕷️ Step 1: Running web crawler for direct URL generation...")
+        # web_crawler_results = None
+        # try:
+        #     web_crawler_results = await run_web_crawler_async(icp_data, icp_identifier)
+        #     
+        #     if web_crawler_results['success']:
+        #         summary = web_crawler_results['summary']
+        #         logger.info(f"✅ Web crawler completed: {summary['leads_stored']} leads stored, {summary['duplicates_found']} duplicates found")
+        #     else:
+        #         logger.warning(f"⚠️ Web crawler failed: {web_crawler_results.get('error', 'Unknown error')}")
+        #         
+        # except Exception as e:
+        #     logger.error(f"❌ Error in web crawler: {e}")
+        #     web_crawler_results = {'success': False, 'error': str(e)}
+        # Step 2: Generate search queries with Gemini AI
+        logger.info("🤖 Step 2: Generating search queries...")
         queries = await orch.generate_search_queries(icp_data, selected_scrapers)
         
         if not queries:
@@ -182,9 +220,9 @@ async def run_pipeline_async(orch, icp_data, selected_scrapers):
         
         logger.info(f"✅ Generated {len(queries)} search queries")
         
-        # Step 2: Collect URLs using web_url_scraper
-        logger.info("🔍 Step 2: Collecting URLs...")
-        classified_urls = await orch.collect_urls_from_queries(queries)
+        # Step 3: Collect URLs using web_url_scraper
+        logger.info("🔍 Step 3: Collecting URLs...")
+        classified_urls = await orch.collect_urls_from_queries(queries, icp_identifier)
         
         total_urls = sum(len(urls) for urls in classified_urls.values())
         if total_urls == 0:
@@ -192,12 +230,17 @@ async def run_pipeline_async(orch, icp_data, selected_scrapers):
         
         logger.info(f"✅ Collected {total_urls} URLs")
         
-        # Step 3: Run selected scrapers
-        logger.info("🚀 Step 3: Running scrapers...")
-        scraper_results = await orch.run_selected_scrapers(classified_urls, selected_scrapers)
+        # Step 4: Run selected scrapers
+        logger.info("🚀 Step 4: Running scrapers...")
+        scraper_results = await orch.run_selected_scrapers(classified_urls, selected_scrapers, icp_identifier)
         
-        # Step 4: Filter and process leads using MongoDBLeadProcessor
-        logger.info("🧹 Step 4: Filtering and processing leads...")
+        # Add web crawler results to scraper results
+        # COMMENTED OUT - crl.py removed from flow
+        # if web_crawler_results:
+        #     scraper_results['web_crawler'] = web_crawler_results
+        
+        # Step 5: Filter and process leads using MongoDBLeadProcessor
+        logger.info("🧹 Step 5: Filtering and processing leads...")
         lead_filtering_results = {}
         try:
             lead_processor = MongoDBLeadProcessor()
@@ -224,9 +267,36 @@ async def run_pipeline_async(orch, icp_data, selected_scrapers):
         
         # Add filtering results to scraper results
         scraper_results['lead_filtering'] = lead_filtering_results
+
+        # Step 6: Enhance leads with contact information using contact scraper
+        logger.info("📞 Step 6: Enhancing leads with contact information...")
+        contact_enhancement_results = {}
+        try:
+            contact_enhancement_data = await run_optimized_contact_scraper(
+                limit=0,  # Process all leads without contact info
+                batch_size=20
+            )
+            
+            # Count leads with emails and phone numbers
+            leads_with_emails = sum(1 for lead in contact_enhancement_data if lead.get('emails'))
+            leads_with_phones = sum(1 for lead in contact_enhancement_data if lead.get('phone_numbers'))
+            
+            contact_enhancement_results = {
+                'enhanced_leads': len(contact_enhancement_data),
+                'leads_with_emails': leads_with_emails,
+                'leads_with_phones': leads_with_phones,
+                'enhancement_data': contact_enhancement_data
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Error in contact enhancement: {e}")
+            contact_enhancement_results = {'error': str(e)}
         
-        # Step 5: Generate final report
-        logger.info("📊 Step 5: Generating final report...")
+        # Add contact enhancement results to scraper results
+        scraper_results['contact_enhancement'] = contact_enhancement_results
+        
+        # Step 7: Generate final report
+        logger.info("📊 Step 7: Generating final report...")
         report_file = orch.generate_final_report(icp_data, selected_scrapers, scraper_results)
         
         pipeline_end = datetime.now()
@@ -254,6 +324,25 @@ async def run_pipeline_async(orch, icp_data, selected_scrapers):
         # Generate summary for each scraper
         successful_scrapers = 0
         for scraper, result in scraper_results.items():
+            # COMMENTED OUT - crl.py removed from flow
+            # if scraper == 'web_crawler':
+            #     # Handle web crawler results separately
+            #     if result.get('success'):
+            #         successful_scrapers += 1
+            #         summary = result.get('summary', {})
+            #         response_data["scraper_results_summary"][scraper] = {
+            #             "status": "success",
+            #             "leads_found": summary.get('total_leads_found', 0),
+            #             "leads_stored": summary.get('leads_stored', 0),
+            #             "duplicates_found": summary.get('duplicates_found', 0),
+            #             "urls_crawled": summary.get('urls_crawled', 0),
+            #             "execution_time_seconds": summary.get('execution_time_seconds', 0)
+            #         }
+            #     else:
+            #         response_data["scraper_results_summary"][scraper] = {
+            #             "status": "failed",
+            #             "error": result.get('error', 'Unknown error')
+            #         }
             if scraper == 'lead_filtering':
                 # Handle lead filtering results separately
                 if result.get('error'):
@@ -272,6 +361,21 @@ async def run_pipeline_async(orch, icp_data, selected_scrapers):
                         "leads_inserted": filtering_stats.get('inserted', 0),
                         "email_based_leads": filtering_stats.get('email_based', 0),
                         "phone_based_leads": filtering_stats.get('phone_based', 0)
+                    }
+            elif scraper == 'contact_enhancement':
+                # Handle contact enhancement results separately
+                if result.get('error'):
+                    response_data["scraper_results_summary"][scraper] = {
+                        "status": "failed", 
+                        "error": result['error']
+                    }
+                else:
+                    successful_scrapers += 1
+                    response_data["scraper_results_summary"][scraper] = {
+                        "status": "success",
+                        "enhanced_leads": result.get('enhanced_leads', 0),
+                        "leads_with_emails": result.get('leads_with_emails', 0),
+                        "leads_with_phones": result.get('leads_with_phones', 0)
                     }
             elif result.get('error'):
                 response_data["scraper_results_summary"][scraper] = {
@@ -305,19 +409,276 @@ async def run_pipeline_async(orch, icp_data, selected_scrapers):
                         "status": "success" if result.get('success') else "failed"
                     }
         
-        # Count successful scrapers (excluding lead_filtering)
-        actual_successful_scrapers = len([r for r in scraper_results.values() 
-                                        if not r.get('error') and r != scraper_results.get('lead_filtering')])
+        # Count successful scrapers (excluding lead_filtering and contact_enhancement)
+        actual_successful_scrapers = len([r for r in scraper_results.items() 
+                                        if not r[1].get('error') and r[0] not in ['lead_filtering', 'contact_enhancement']])
         
         response_data["pipeline_metadata"]["successful_scrapers"] = actual_successful_scrapers
         response_data["pipeline_metadata"]["total_scrapers"] = len(selected_scrapers)
         response_data["pipeline_metadata"]["lead_filtering_successful"] = not lead_filtering_results.get('error')
+        response_data["pipeline_metadata"]["contact_enhancement_successful"] = not contact_enhancement_results.get('error')
         
         logger.info(f"✅ Pipeline completed successfully in {execution_time:.2f} seconds")
         return response_data
         
     except Exception as e:
         logger.error(f"❌ Pipeline failed: {e}")
+        raise
+
+async def run_direct_pipeline_async(orch, scraper_selections, icp_identifier='default'):
+    """
+    Run the direct lead generation pipeline using URLs from scraped_urls collection
+    """
+    pipeline_start = datetime.now()
+    
+    try:
+        # Step 1: Ensure scraped_urls collection exists
+        logger.info("🗄️ Step 1: Ensuring scraped_urls collection exists...")
+        try:
+            from web_url_scraper.database_service import ensure_collection_exists
+            ensure_collection_exists()
+            logger.info("✅ scraped_urls collection ready")
+        except Exception as e:
+            logger.error(f"❌ Failed to ensure scraped_urls collection exists: {e}")
+        
+        # Step 2: Get URLs from scraped_urls collection based on scraper selections
+        logger.info("🔍 Step 2: Collecting URLs from scraped_urls collection...")
+        classified_urls = {}
+        used_urls = []  # Track URLs that will be used for processing
+        
+        # Map scraper names to URL types
+        scraper_to_url_type = {
+            'web_scraper': 'general',
+            'instagram': 'instagram',
+            'linkedin': 'linkedin',
+            'youtube': 'youtube'
+        }
+        
+        for scraper, count in scraper_selections.items():
+            if count > 0:
+                url_type = scraper_to_url_type[scraper]
+                logger.info(f"Getting {count} unprocessed URLs for {scraper} (type: {url_type}) with ICP: {icp_identifier}")
+                
+                # Get unprocessed URLs for this type and ICP identifier
+                url_docs = get_urls_by_type_and_icp(url_type, icp_identifier, limit=count)
+                
+                if url_docs:
+                    # Extract URLs from documents
+                    urls = [doc['url'] for doc in url_docs]
+                    classified_urls[url_type] = urls
+                    used_urls.extend(urls)
+                    
+                    logger.info(f"✅ Found {len(urls)} URLs for {scraper}")
+                else:
+                    classified_urls[url_type] = []
+                    logger.warning(f"⚠️ No unprocessed URLs found for {scraper}")
+        
+        total_urls = sum(len(urls) for urls in classified_urls.values())
+        if total_urls == 0:
+            raise Exception("No unprocessed URLs found for any selected scrapers")
+        
+        logger.info(f"✅ Collected {total_urls} URLs from scraped_urls collection")
+        
+        # Step 3: Mark URLs as processed to prevent duplicate processing
+        logger.info("🏷️ Step 3: Marking URLs as processed...")
+        marked_count = mark_urls_as_processed(used_urls)
+        logger.info(f"✅ Marked {marked_count} URLs as processed")
+        
+        # Step 4: Run selected scrapers
+        logger.info("🚀 Step 4: Running scrapers...")
+        selected_scrapers = list(scraper_selections.keys())
+        # Use the provided ICP identifier or generate a default one
+        if icp_identifier == 'default':
+            icp_identifier = orch.generate_icp_identifier(orch.get_hardcoded_icp())
+        scraper_results = await orch.run_selected_scrapers(classified_urls, selected_scrapers, icp_identifier)
+        
+        # Step 5: Filter and process leads using MongoDBLeadProcessor
+        logger.info("🧹 Step 5: Filtering and processing leads...")
+        lead_filtering_results = {}
+        try:
+            lead_processor = MongoDBLeadProcessor()
+            
+            # Create indexes for the target collection
+            lead_processor.create_indexes()
+            
+            # Process all leads from web_leads collection to leadgen_leads collection
+            filtering_results = lead_processor.process_leads(batch_size=50)
+            
+            # Get processing statistics
+            processing_stats = lead_processor.get_processing_stats()
+            
+            lead_filtering_results = {
+                'filtering_stats': filtering_results,
+                'processing_stats': processing_stats
+            }
+            
+            lead_processor.close_connection()
+            
+        except Exception as e:
+            logger.error(f"❌ Error in lead filtering: {e}")
+            lead_filtering_results = {'error': str(e)}
+        
+        # Add filtering results to scraper results
+        scraper_results['lead_filtering'] = lead_filtering_results
+
+        # Step 6: Enhance leads with contact information using contact scraper
+        logger.info("📞 Step 6: Enhancing leads with contact information...")
+        contact_enhancement_results = {}
+        try:
+            contact_enhancement_data = await run_optimized_contact_scraper(
+                limit=0,  # Process all leads without contact info
+                batch_size=20
+            )
+            
+            # Count leads with emails and phone numbers
+            leads_with_emails = sum(1 for lead in contact_enhancement_data if lead.get('emails'))
+            leads_with_phones = sum(1 for lead in contact_enhancement_data if lead.get('phone_numbers'))
+            
+            contact_enhancement_results = {
+                'enhanced_leads': len(contact_enhancement_data),
+                'leads_with_emails': leads_with_emails,
+                'leads_with_phones': leads_with_phones,
+                'enhancement_data': contact_enhancement_data
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Error in contact enhancement: {e}")
+            contact_enhancement_results = {'error': str(e)}
+        
+        # Add contact enhancement results to scraper results
+        scraper_results['contact_enhancement'] = contact_enhancement_results
+        
+        # Step 7: Generate final report
+        logger.info("📊 Step 7: Generating final report...")
+        # Create dummy ICP data for report generation
+        dummy_icp_data = orch.get_hardcoded_icp()
+        report_file = orch.generate_final_report(dummy_icp_data, selected_scrapers, scraper_results)
+        
+        pipeline_end = datetime.now()
+        execution_time = (pipeline_end - pipeline_start).total_seconds()
+        
+        # Prepare response
+        response_data = {
+            "pipeline_metadata": {
+                "execution_time_seconds": execution_time,
+                "start_time": pipeline_start.isoformat(),
+                "end_time": pipeline_end.isoformat(),
+                "selected_scrapers": selected_scrapers,
+                "total_urls_processed": total_urls,
+                "urls_marked_processed": marked_count,
+                "pipeline_type": "direct"
+            },
+            "url_collection": {
+                "classified_urls_count": {k: len(v) for k, v in classified_urls.items()},
+                "total_urls": total_urls,
+                "urls_used": used_urls
+            },
+            "scraper_results_summary": {},
+            "report_file": report_file
+        }
+        
+        # Generate summary for each scraper
+        successful_scrapers = 0
+        for scraper, result in scraper_results.items():
+            # COMMENTED OUT - crl.py removed from flow
+            # if scraper == 'web_crawler':
+            #     # Handle web crawler results separately
+            #     if result.get('success'):
+            #         successful_scrapers += 1
+            #         summary = result.get('summary', {})
+            #         response_data["scraper_results_summary"][scraper] = {
+            #             "status": "success",
+            #             "leads_found": summary.get('total_leads_found', 0),
+            #             "leads_stored": summary.get('leads_stored', 0),
+            #             "duplicates_found": summary.get('duplicates_found', 0),
+            #             "urls_crawled": summary.get('urls_crawled', 0),
+            #             "execution_time_seconds": summary.get('execution_time_seconds', 0)
+            #         }
+            #     else:
+            #         response_data["scraper_results_summary"][scraper] = {
+            #             "status": "failed",
+            #             "error": result.get('error', 'Unknown error')
+            #         }
+            if scraper == 'lead_filtering':
+                # Handle lead filtering results separately
+                if result.get('error'):
+                    response_data["scraper_results_summary"][scraper] = {
+                        "status": "failed", 
+                        "error": result['error']
+                    }
+                else:
+                    successful_scrapers += 1
+                    filtering_stats = result.get('filtering_stats', {})
+                    response_data["scraper_results_summary"][scraper] = {
+                        "status": "success",
+                        "leads_processed": filtering_stats.get('total', 0),
+                        "leads_filtered": filtering_stats.get('filtered', 0),
+                        "leads_extracted": filtering_stats.get('extracted', 0),
+                        "leads_inserted": filtering_stats.get('inserted', 0),
+                        "email_based_leads": filtering_stats.get('email_based', 0),
+                        "phone_based_leads": filtering_stats.get('phone_based', 0)
+                    }
+            elif scraper == 'contact_enhancement':
+                # Handle contact enhancement results separately
+                if result.get('error'):
+                    response_data["scraper_results_summary"][scraper] = {
+                        "status": "failed", 
+                        "error": result['error']
+                    }
+                else:
+                    successful_scrapers += 1
+                    response_data["scraper_results_summary"][scraper] = {
+                        "status": "success",
+                        "enhanced_leads": result.get('enhanced_leads', 0),
+                        "leads_with_emails": result.get('leads_with_emails', 0),
+                        "leads_with_phones": result.get('leads_with_phones', 0)
+                    }
+            elif result.get('error'):
+                response_data["scraper_results_summary"][scraper] = {
+                    "status": "failed", 
+                    "error": result['error']
+                }
+            else:
+                successful_scrapers += 1
+                if scraper == 'web_scraper':
+                    summary = result.get('summary', {})
+                    response_data["scraper_results_summary"][scraper] = {
+                        "status": "success",
+                        "leads_found": summary.get('successful_leads', 0),
+                        "urls_processed": summary.get('urls_processed', 0)
+                    }
+                elif scraper == 'instagram':
+                    response_data["scraper_results_summary"][scraper] = {
+                        "status": "success",
+                        "profiles_found": len(result.get('data', [])),
+                        "success_rate": result.get('summary', {}).get('success_rate', 0)
+                    }
+                elif scraper == 'linkedin':
+                    metadata = result.get('scraping_metadata', {})
+                    response_data["scraper_results_summary"][scraper] = {
+                        "status": "success",
+                        "profiles_found": metadata.get('successful_scrapes', 0),
+                        "failed_scrapes": metadata.get('failed_scrapes', 0)
+                    }
+                elif scraper == 'youtube':
+                    response_data["scraper_results_summary"][scraper] = {
+                        "status": "success" if result.get('success') else "failed"
+                    }
+        
+        # Count successful scrapers (excluding lead_filtering and contact_enhancement)
+        actual_successful_scrapers = len([r for r in scraper_results.items() 
+                                        if not r[1].get('error') and r[0] not in ['lead_filtering', 'contact_enhancement']])
+        
+        response_data["pipeline_metadata"]["successful_scrapers"] = actual_successful_scrapers
+        response_data["pipeline_metadata"]["total_scrapers"] = len(selected_scrapers)
+        response_data["pipeline_metadata"]["lead_filtering_successful"] = not lead_filtering_results.get('error')
+        response_data["pipeline_metadata"]["contact_enhancement_successful"] = not contact_enhancement_results.get('error')
+        
+        logger.info(f"✅ Direct pipeline completed successfully in {execution_time:.2f} seconds")
+        return response_data
+        
+    except Exception as e:
+        logger.error(f"❌ Direct pipeline failed: {e}")
         raise
 
 @app.route('/api/queries/generate', methods=['POST'])
@@ -433,6 +794,62 @@ def run_lead_filtering():
             "error": f"Lead filtering failed: {str(e)}"
         }), 500
 
+@app.route('/api/contact-enhancement/run', methods=['POST'])
+def run_contact_enhancement():
+    """
+    Run only the contact enhancement process
+    
+    Expected payload:
+    {
+        "limit": 0,          # Optional limit on number of leads to process (0 = all)
+        "batch_size": 20     # Optional batch size for processing
+    }
+    """
+    try:
+        # Validate request
+        if not request.is_json:
+            raise BadRequest("Request must be JSON")
+        
+        data = request.get_json() or {}
+        limit = data.get('limit', 0)
+        batch_size = data.get('batch_size', 20)
+        
+        logger.info(f"Starting contact enhancement process with limit: {limit}, batch_size: {batch_size}")
+        
+        # Run contact enhancement asynchronously
+        contact_enhancement_data = run_async(run_optimized_contact_scraper(
+            limit=limit,
+            batch_size=batch_size
+        ))
+        
+        # Count leads with emails and phone numbers
+        leads_with_emails = sum(1 for lead in contact_enhancement_data if lead.get('emails'))
+        leads_with_phones = sum(1 for lead in contact_enhancement_data if lead.get('phone_numbers'))
+        
+        return jsonify({
+            "success": True,
+            "data": {
+                "enhanced_leads": len(contact_enhancement_data),
+                "leads_with_emails": leads_with_emails,
+                "leads_with_phones": leads_with_phones,
+                "enhancement_data": contact_enhancement_data,
+                "timestamp": datetime.now().isoformat()
+            },
+            "message": "Contact enhancement completed successfully"
+        })
+        
+    except BadRequest as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 400
+    except Exception as e:
+        logger.error(f"Error in contact enhancement: {e}")
+        return jsonify({
+            "success": False,
+            "error": f"Contact enhancement failed: {str(e)}"
+        }), 500
+
 @app.route('/api/status', methods=['GET'])
 def get_system_status():
     """Get system status and capabilities"""
@@ -471,6 +888,177 @@ def get_system_status():
             "error": str(e)
         }), 500
 
+@app.route('/api/urls/available', methods=['GET'])
+def get_available_urls():
+    """Get count of available unprocessed URLs by type"""
+    try:
+        available_counts = get_available_url_counts()
+        
+        return jsonify({
+            "success": True,
+            "data": {
+                "available_urls": available_counts,
+                "total_available": sum(available_counts.values()),
+                "timestamp": datetime.now().isoformat()
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting available URLs: {e}")
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+@app.route('/api/leads/by-icp/<icp_identifier>', methods=['GET'])
+def get_leads_by_icp(icp_identifier):
+    """Get leads filtered by ICP identifier"""
+    try:
+        # Get query parameters
+        limit = request.args.get('limit', 100, type=int)
+        skip = request.args.get('skip', 0, type=int)
+        
+        # Validate parameters
+        if limit < 0 or limit > 1000:
+            return jsonify({
+                "success": False,
+                "error": "Limit must be between 0 and 1000"
+            }), 400
+        
+        if skip < 0:
+            return jsonify({
+                "success": False,
+                "error": "Skip must be non-negative"
+            }), 400
+        
+        # Get MongoDB manager
+        orch = get_orchestrator()
+        mongodb_manager = orch.mongodb_manager
+        
+        # Get leads by ICP identifier
+        leads = mongodb_manager.get_leads_by_icp_identifier(icp_identifier, limit, skip)
+        
+        return jsonify({
+            "success": True,
+            "data": {
+                "icp_identifier": icp_identifier,
+                "leads": leads,
+                "total_returned": len(leads),
+                "limit": limit,
+                "skip": skip,
+                "timestamp": datetime.now().isoformat()
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting leads by ICP: {e}")
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+@app.route('/api/leads/icp-stats/<icp_identifier>', methods=['GET'])
+def get_icp_statistics(icp_identifier):
+    """Get statistics for a specific ICP identifier"""
+    try:
+        # Get MongoDB manager
+        orch = get_orchestrator()
+        mongodb_manager = orch.mongodb_manager
+        
+        # Get ICP statistics
+        stats = mongodb_manager.get_icp_statistics(icp_identifier)
+        
+        if 'error' in stats:
+            return jsonify({
+                "success": False,
+                "error": stats['error']
+            }), 500
+        
+        return jsonify({
+            "success": True,
+            "data": stats
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting ICP statistics: {e}")
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+@app.route('/api/lead-generation/direct', methods=['POST'])
+def run_direct_lead_generation():
+    """
+    Run lead generation directly from scraped URLs without ICP/query generation
+    
+    Expected payload:
+    {
+        "scraper_selections": {
+            "web_scraper": 10,
+            "instagram": 5,
+            "linkedin": 6,
+            "youtube": 5
+        },
+        "icp_identifier": "premium-bus-travel_20241201_1430_a1b2c3d4"  # Optional, defaults to "default"
+    }
+    """
+    try:
+        # Validate request
+        if not request.is_json:
+            raise BadRequest("Request must be JSON")
+        
+        data = request.get_json()
+        scraper_selections = data.get('scraper_selections', {})
+        icp_identifier = data.get('icp_identifier', 'default')
+        
+        if not scraper_selections:
+            return jsonify({
+                "success": False,
+                "error": "scraper_selections is required"
+            }), 400
+        
+        # Validate scraper selections
+        valid_scrapers = ['web_scraper', 'instagram', 'linkedin', 'youtube']
+        for scraper, count in scraper_selections.items():
+            if scraper not in valid_scrapers:
+                return jsonify({
+                    "success": False,
+                    "error": f"Invalid scraper: {scraper}. Must be one of {valid_scrapers}"
+                }), 400
+            
+            if not isinstance(count, int) or count < 0:
+                return jsonify({
+                    "success": False,
+                    "error": f"Invalid count for {scraper}: {count}. Must be a non-negative integer"
+                }), 400
+        
+        logger.info(f"Starting direct lead generation with scraper selections: {scraper_selections}")
+        
+        # Get orchestrator instance
+        orch = get_orchestrator()
+        
+        # Run the direct pipeline asynchronously
+        result = run_async(run_direct_pipeline_async(orch, scraper_selections, icp_identifier))
+        
+        return jsonify({
+            "success": True,
+            "data": result,
+            "icp_identifier": icp_identifier,
+            "message": "Direct lead generation pipeline completed successfully"
+        })
+        
+    except BadRequest as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 400
+    except Exception as e:
+        logger.error(f"Error in direct lead generation pipeline: {e}")
+        return jsonify({
+            "success": False,
+            "error": f"Direct pipeline failed: {str(e)}"
+        }), 500
+
 @app.errorhandler(404)
 def not_found(error):
     """Handle 404 errors"""
@@ -482,8 +1070,13 @@ def not_found(error):
             "GET /api/scrapers - Get available scrapers", 
             "GET /api/icp/template - Get ICP template",
             "POST /api/lead-generation/run - Run complete pipeline",
+            "POST /api/lead-generation/direct - Run direct pipeline from scraped URLs",
             "POST /api/queries/generate - Generate queries only",
             "POST /api/lead-filtering/run - Run lead filtering only",
+            "POST /api/contact-enhancement/run - Run contact enhancement only",
+            "GET /api/urls/available - Get available unprocessed URLs count",
+            "GET /api/leads/by-icp/<icp_identifier> - Get leads by ICP identifier",
+            "GET /api/leads/icp-stats/<icp_identifier> - Get ICP statistics",
             "GET /api/status - Get system status"
         ]
     }), 404
@@ -505,8 +1098,13 @@ if __name__ == '__main__':
     print("  GET  /api/scrapers - Get available scrapers")
     print("  GET  /api/icp/template - Get ICP template") 
     print("  POST /api/lead-generation/run - Run complete pipeline")
+    print("  POST /api/lead-generation/direct - Run direct pipeline from scraped URLs")
     print("  POST /api/queries/generate - Generate queries only")
     print("  POST /api/lead-filtering/run - Run lead filtering only")
+    print("  POST /api/contact-enhancement/run - Run contact enhancement only")
+    print("  GET  /api/urls/available - Get available unprocessed URLs count")
+    print("  GET  /api/leads/by-icp/<icp_identifier> - Get leads by ICP identifier")
+    print("  GET  /api/leads/icp-stats/<icp_identifier> - Get ICP statistics")
     print("  GET  /api/status - Get system status")
     print("")
     

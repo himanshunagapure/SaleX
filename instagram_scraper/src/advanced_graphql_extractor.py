@@ -13,6 +13,7 @@ import time
 from typing import Dict, Any, Optional, List
 from bs4 import BeautifulSoup
 from instagram_scraper.src.browser_manager import BrowserManager
+from instagram_scraper.src.error_handler import ErrorHandler, ErrorType
 
 
 class AdvancedGraphQLExtractor:
@@ -22,6 +23,7 @@ class AdvancedGraphQLExtractor:
         self.browser_manager = BrowserManager(headless=headless, enable_anti_detection=enable_anti_detection, is_mobile=is_mobile)
         self.network_requests = []
         self.graphql_responses = {}
+        self.error_handler = ErrorHandler(max_retries=2, base_delay=2.0)
         
     async def start(self) -> None:
         """Initialize browser manager with network monitoring"""
@@ -154,9 +156,33 @@ class AdvancedGraphQLExtractor:
                 print(f"Error processing response: {e}")
     
     async def extract_graphql_data(self, url: str) -> Dict[str, Any]:
-        """Extract GraphQL data from a specific Instagram page"""
+        """Extract GraphQL data from a specific Instagram page with retry logic"""
         print(f"Extracting GraphQL data from: {url}")
         
+        # Use error handler with retry logic and enhanced error handling
+        try:
+            return await self.error_handler.retry_with_backoff(
+                self._extract_graphql_data_internal, url
+            )
+        except Exception as e:
+            error_msg = str(e)
+            print(f"❌ Error extracting data from {url}: {error_msg}")
+            
+            # Return structured error response
+            return {
+                'url': url,
+                'error': error_msg,
+                'success': False,
+                'error_type': self.error_handler.classify_error(e).value,
+                'html_length': 0,
+                'text_length': 0,
+                'network_requests': 0,
+                'graphql_responses': 0,
+                'api_responses': 0
+            }
+    
+    async def _extract_graphql_data_internal(self, url: str) -> Dict[str, Any]:
+        """Internal method to extract GraphQL data from a specific Instagram page"""
         # Clear previous requests
         self.network_requests = []
         self.graphql_responses = {}
@@ -216,13 +242,13 @@ class AdvancedGraphQLExtractor:
             # 7. Analyze network requests
             network_analysis = await self._analyze_network_requests()
             extracted_data['network_analysis'] = network_analysis
-            print("=" * 50)
-            print("\n Extracted Data graphql_data: ", extracted_data.get('graphql_data'))
-            print("\n Extracted Data api_data: ", extracted_data.get('api_data'))
-            print("\n Extracted Data user_data: ", extracted_data.get('user_data'))
-            print("\n Extracted Data meta_data: ", extracted_data.get('meta_data'))
-            print("\n Extracted Data script_data: ", extracted_data.get('script_data'))
-            print("=" * 50)
+            # print("=" * 50)
+            # print("\n Extracted Data graphql_data: ", extracted_data.get('graphql_data'))
+            # print("\n Extracted Data api_data: ", extracted_data.get('api_data'))
+            # print("\n Extracted Data user_data: ", extracted_data.get('user_data'))
+            # print("\n Extracted Data meta_data: ", extracted_data.get('meta_data'))
+            # print("\n Extracted Data script_data: ", extracted_data.get('script_data'))
+            # print("=" * 50)
             return extracted_data
             
         except Exception as e:

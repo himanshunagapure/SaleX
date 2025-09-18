@@ -22,7 +22,7 @@ class MongoDBLeadProcessor:
         Initialize MongoDB connection
         """
         self.mongodb_uri = mongodb_uri or os.getenv('MONGODB_URI', 'mongodb://localhost:27017/')
-        self.database_name = database_name or os.getenv('MONGODB_DATABASE_NAME', 'lead_generation_db')
+        self.database_name = database_name or os.getenv('MONGODB_DATABASE_NAME', 'aiqod-dev')
         self.source_collection = os.getenv('MONGODB_COLLECTION', 'web_leads')
         self.target_collection = 'leadgen_leads'
         self.unified_leads_collection = 'unified_leads'

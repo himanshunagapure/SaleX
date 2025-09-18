@@ -20,7 +20,8 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional
 from urllib.parse import urlparse
 import logging
-
+import re
+import random
 # Add current directory to path for imports
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
@@ -28,11 +29,13 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from web_url_scraper.main import main as web_url_scraper_main, initialize_application
 from web_url_scraper.database_service import get_urls_by_type, get_url_type_statistics
 from web_scraper.main_app import WebScraperOrchestrator
-from instagram_scraper.main import InstagramScraper
-from linkedin_scraper.main import LinkedInScraperMain
+from instagram_scraper.main_optimized import OptimizedInstagramScraper, ScrapingConfig
+from linkedin_scraper.main import LinkedInScraperMain, OptimizedLinkedInScraper
 from yt_scraper.main import YouTubeScraperInterface
 from database.mongodb_manager import get_mongodb_manager
 from filter_web_lead import MongoDBLeadProcessor
+from contact_scraper import run_optimized_contact_scraper
+# from web.crl import run_web_crawler_async  # Commented out - crl.py removed from flow
 
 # Import Gemini AI (assuming it's available)
 try:
@@ -62,6 +65,15 @@ class LeadGenerationOrchestrator:
             'youtube': True
         }
         
+        # Instagram scraper performance configuration
+        self.instagram_config = ScrapingConfig(
+            max_workers=4,
+            batch_size=5,
+            context_pool_size=4,
+            rate_limit_delay=1.0,
+            context_reuse_limit=20
+        )
+        
         # Initialize MongoDB
         try:
             self.mongodb_manager = get_mongodb_manager()
@@ -82,6 +94,32 @@ class LeadGenerationOrchestrator:
             self.gemini_model = None
             logger.warning("⚠️ Gemini AI not available")
     
+    def generate_icp_identifier(self, icp_data: Dict[str, Any]) -> str:
+        """
+        Generate a unique identifier for the ICP data
+        
+        Args:
+            icp_data: ICP data dictionary
+            
+        Returns:
+            str: Unique ICP identifier
+        """
+        import hashlib
+        import json
+        
+        # Create a hash of the ICP data for uniqueness
+        icp_string = json.dumps(icp_data, sort_keys=True)
+        icp_hash = hashlib.md5(icp_string.encode()).hexdigest()[:8]
+        
+        # Get product name for readability
+        product_name = icp_data.get('product_details', {}).get('product_name', 'Unknown')
+        product_slug = ''.join(c.lower() for c in product_name if c.isalnum() or c.isspace()).replace(' ', '-')[:20]
+        
+        # Create timestamp for uniqueness
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M')
+        
+        return f"{product_slug}_{timestamp}_{icp_hash}"
+
     def get_hardcoded_icp(self) -> Dict[str, Any]:
         """
         Get hardcoded ICP (Ideal Customer Profile) data
@@ -143,7 +181,7 @@ class LeadGenerationOrchestrator:
                 ],
                 "region": ["India", "Major Cities", "Tourist Destinations"],
                 "budget_range": "$5,000-$50,000 annually",
-                "travel_occasions": [
+                "occasions": [
                     "Corporate offsites",
                     "Wedding functions",
                     "Family vacations",
@@ -195,6 +233,47 @@ class LeadGenerationOrchestrator:
         
         return selected if selected else ['web_scraper']
     
+    def configure_instagram_performance(self):
+        """Configure Instagram scraper performance settings"""
+        print("\n⚡ INSTAGRAM SCRAPER PERFORMANCE CONFIGURATION")
+        print("=" * 60)
+        print("Current settings:")
+        print(f"  - Max workers: {self.instagram_config.max_workers}")
+        print(f"  - Batch size: {self.instagram_config.batch_size}")
+        print(f"  - Context pool size: {self.instagram_config.context_pool_size}")
+        print(f"  - Rate limit delay: {self.instagram_config.rate_limit_delay}s")
+        print(f"  - Context reuse limit: {self.instagram_config.context_reuse_limit}")
+        
+        choice = input("\nConfigure Instagram performance? (y/n, default: n): ").strip().lower()
+        
+        if choice == 'y':
+            try:
+                max_workers = input(f"Max concurrent workers (current: {self.instagram_config.max_workers}): ").strip()
+                if max_workers.isdigit():
+                    self.instagram_config.max_workers = int(max_workers)
+                
+                batch_size = input(f"Batch size (current: {self.instagram_config.batch_size}): ").strip()
+                if batch_size.isdigit():
+                    self.instagram_config.batch_size = int(batch_size)
+                
+                context_pool_size = input(f"Context pool size (current: {self.instagram_config.context_pool_size}): ").strip()
+                if context_pool_size.isdigit():
+                    self.instagram_config.context_pool_size = int(context_pool_size)
+                
+                rate_limit_delay = input(f"Rate limit delay in seconds (current: {self.instagram_config.rate_limit_delay}): ").strip()
+                if rate_limit_delay.replace('.', '').isdigit():
+                    self.instagram_config.rate_limit_delay = float(rate_limit_delay)
+                
+                print(f"\n✅ Instagram performance settings updated!")
+                print(f"  - Max workers: {self.instagram_config.max_workers}")
+                print(f"  - Batch size: {self.instagram_config.batch_size}")
+                print(f"  - Context pool size: {self.instagram_config.context_pool_size}")
+                print(f"  - Rate limit delay: {self.instagram_config.rate_limit_delay}s")
+                
+            except Exception as e:
+                logger.warning(f"⚠️ Error configuring Instagram performance: {e}")
+                print("Using default settings.")
+    
     async def generate_search_queries(self, icp_data: Dict[str, Any], selected_scrapers: List[str]) -> List[str]:
         """
         Generate search queries using Gemini AI based on ICP data
@@ -214,11 +293,15 @@ class LeadGenerationOrchestrator:
             
             # Parse the response to extract queries
             base_queries = self._parse_gemini_response(response.text)
-        
+            print('*' * 80)
+            print(base_queries)
+            print('*' * 80)
+
+            queries = base_queries[:2]  # Limit to 2 queries
             # Add platform-specific queries based on selected scrapers
-            all_queries = self._add_platform_specific_queries(base_queries, selected_scrapers)
+            all_queries = self._add_platform_specific_queries(queries, selected_scrapers)
         
-            logger.info(f"✅ Generated {len(all_queries)} total search queries ({len(base_queries)} base + {len(all_queries) - len(base_queries)} platform-specific)")
+            logger.info(f"✅ Generated {len(all_queries)} total search queries ({len(queries)} base + {len(all_queries) - len(queries)} platform-specific)")
             return all_queries
             
         except Exception as e:
@@ -256,51 +339,44 @@ class LeadGenerationOrchestrator:
                 logger.info(f"  - {scraper} queries: {len(base_queries)}")
         
         return all_queries
-
     def _create_gemini_prompt(self, icp_data: Dict[str, Any]) -> str:
         """Create a prompt for Gemini AI to generate search queries"""
-        product = icp_data["product_details"]
-        icp = icp_data["icp_information"]
+        product = icp_data.get("product_details", {})
+        icp = icp_data.get("icp_information", {})
         
         prompt = f"""
-        Based on the following Ideal Customer Profile (ICP) for a premium bus travel agency, generate 15 specific Google search queries that would help find potential customers planning group travel:
+        Based on the following Ideal Customer Profile (ICP), generate 15 specific Google search queries that would help find potential customers:
 
         BUSINESS DETAILS:
-        - Service: {product["product_name"]}
-        - Category: {product["product_category"]}
-        - Key Benefits: {', '.join(product["usps"])}
-        - Problems Solved: {', '.join(product["pain_points_solved"])}
+        - Product/Service: {product.get("product_name", "Not specified")}
+        - Category: {product.get("product_category", "Not specified")}
+        - Key Benefits: {', '.join(product.get("usps", []))}
+        - Problems Solved: {', '.join(product.get("pain_points_solved", []))}
 
         TARGET CUSTOMER PROFILE:
-        - Target Segments: {', '.join(icp["target_industry"])}
-        - Group Size: {icp["company_size"]}
-        - Decision Makers: {', '.join(icp["decision_maker_persona"])}
-        - Service Areas: {', '.join(icp["region"])}
-        - Budget Range: {icp["budget_range"]}
-        - Travel Occasions: {', '.join(icp["travel_occasions"])}
+        - Target Industries: {', '.join(icp.get("target_industry", []))}
+        - Company Size: {icp.get("company_size", "Not specified")}
+        - Decision Makers: {', '.join(icp.get("decision_maker_persona", []))}
+        - Geographic Regions: {', '.join(icp.get("region", []))}
+        - Budget Range: {icp.get("budget_range", "Not specified")}
+        - Occasions: {', '.join(icp.get("occasions", []))}
 
-        Generate search queries that would find:
-        1. Companies/organizations planning group trips or corporate outings
-        2. Families planning vacation trips or reunions
-        3. Wedding planners organizing destination weddings
-        4. Educational institutions planning tours
-        5. Travel influencers and content creators
-        6. People discussing upcoming travel plans on social media
-        7. Corporate HR departments organizing team building events
-        8. Religious organizations planning pilgrimages
-        9. Sports teams/clubs planning trips
-        10. Event management companies handling large groups
+        Generate search queries that would help identify potential customers who:
+        1. Are actively looking for solutions to the problems this product/service solves
+        2. Belong to the target industries mentioned above
+        3. Match the company size and decision maker profiles
+        4. Are located in the specified regions
+        5. Have budget considerations that align with the offering
 
         Focus on search terms that indicate:
-        - Active travel planning ("planning trip", "looking for", "organizing")
-        - Budget considerations ("affordable group travel", "premium travel packages")
-        - Specific destinations popular in India
-        - Group size indicators ("corporate outing", "family reunion", "wedding party")
-        - Timeline indicators ("2024", "2025", "upcoming", "next month")
+        - Active problem-solving or solution-seeking behavior
+        - Industry-specific pain points and needs
+        - Decision-making activities and budget planning
+        - Geographic and demographic indicators
+        - Timeline indicators ("2024", "2025", "looking for", "need", "planning")
 
         Format: Return only the search queries, one per line, without numbering or additional text.
         """
-        
         return prompt
     
     def _parse_gemini_response(self, response_text: str) -> List[str]:
@@ -315,24 +391,25 @@ class LeadGenerationOrchestrator:
             line = line.rstrip('"\'')
             
             # Basic validation - check for minimum length and travel-related keywords
-            travel_keywords = [
-                'travel', 'trip', 'tour', 'vacation', 'holiday', 'outing', 'wedding',
-                'corporate', 'group', 'family', 'pilgrimage', 'destination', 'bus',
-                'transport', 'planning', 'organizing', 'visiting', 'visit', 'travelling',
-                'journey', 'excursion', 'adventure','sightseeing', 'backpacking', 'trekking', 'hiking',
-                'roadtrip', 'road trip', 'picnic', 'camping', 'booking', 'reservation', 'package', 'deal', 'offer',
-                'explore', 'exploring', 'discover', 'discovering', 'wanderlust','company trip', 'staff outing',
-                'event', 'gathering', 'yatra','reunion', 'get-together', 'meetup'
-            ]
+            # travel_keywords = [
+            #     'travel', 'trip', 'tour', 'vacation', 'holiday', 'outing', 'wedding',
+            #     'corporate', 'group', 'family', 'pilgrimage', 'destination', 'bus',
+            #     'transport', 'planning', 'organizing', 'visiting', 'visit', 'travelling',
+            #     'journey', 'excursion', 'adventure','sightseeing', 'backpacking', 'trekking', 'hiking',
+            #     'roadtrip', 'road trip', 'picnic', 'camping', 'booking', 'reservation', 'package', 'deal', 'offer',
+            #     'explore', 'exploring', 'discover', 'discovering', 'wanderlust','company trip', 'staff outing',
+            #     'event', 'gathering', 'yatra','reunion', 'get-together', 'meetup'
+            # ]
+            
+            # if line and len(line) > 15:  # Increased minimum length
+            #     # Check if the query contains at least one travel-related keyword
+            #     if any(keyword.lower() in line.lower() for keyword in travel_keywords):
+            #         queries.append(line)
             
             if line and len(line) > 15:  # Increased minimum length
-                # Check if the query contains at least one travel-related keyword
-                if any(keyword.lower() in line.lower() for keyword in travel_keywords):
-                    queries.append(line)
-            print('*' * 80)
-            print(queries)
-            print('*' * 80)
-        return queries[:3]  # Limit to 3 queries
+                queries.append(line)
+
+        return queries
     
     def _get_fallback_queries(self, icp_data: Dict[str, Any]) -> List[str]:
         """Fallback search queries when Gemini is not available"""
@@ -346,7 +423,7 @@ class LeadGenerationOrchestrator:
         
         return base_queries
     
-    async def collect_urls_from_queries(self, queries: List[str]) -> Dict[str, List[str]]:
+    async def collect_urls_from_queries(self, queries: List[str], icp_identifier: str = 'default') -> Dict[str, List[str]]:
         """
         Use web_url_scraper to collect URLs for each query
         """
@@ -355,7 +432,19 @@ class LeadGenerationOrchestrator:
         # Initialize web_url_scraper
         if not initialize_application():
             logger.error("❌ Failed to initialize web_url_scraper")
-            return {}
+            # Even if initialization fails, ensure the scraped_urls collection exists
+            try:
+                from web_url_scraper.database_service import ensure_collection_exists
+                ensure_collection_exists()
+                logger.info("✅ Created scraped_urls collection despite initialization failure")
+            except Exception as e:
+                logger.error(f"❌ Failed to create scraped_urls collection: {e}")
+            return {
+                'instagram': [],
+                'linkedin': [],
+                'youtube': [],
+                'general': []
+            }
         
         all_urls = []
         
@@ -364,17 +453,29 @@ class LeadGenerationOrchestrator:
             
             try:
                 # Run web_url_scraper for this query
-                success = web_url_scraper_main(query)
+                success = web_url_scraper_main(query, icp_identifier)
                 if success:
                     logger.info(f"✅ Successfully processed query: {query}")
                 else:
                     logger.warning(f"⚠️ Failed to process query: {query}")
+                    # Ensure collection exists even if query processing fails
+                    try:
+                        from web_url_scraper.database_service import ensure_collection_exists
+                        ensure_collection_exists()
+                    except Exception as e:
+                        logger.error(f"❌ Failed to ensure collection exists: {e}")
                 
                 # Add delay between queries to avoid rate limiting
                 await asyncio.sleep(2)
                 
             except Exception as e:
                 logger.error(f"❌ Error processing query '{query}': {e}")
+                # Ensure collection exists even if query processing fails
+                try:
+                    from web_url_scraper.database_service import ensure_collection_exists
+                    ensure_collection_exists()
+                except Exception as e:
+                    logger.error(f"❌ Failed to ensure collection exists: {e}")
 
         try:
             # Get URL type statistics first to see what's available
@@ -448,8 +549,109 @@ class LeadGenerationOrchestrator:
         
         return classified
     
+    def filter_valid_linkedin_urls(self, urls: List[str]) -> List[str]:
+        """
+        Filter and validate LinkedIn URLs to only include scrapeable profile, company, post, and newsletter URLs.
+        
+        Args:
+            urls (List[str]): List of LinkedIn URLs to filter
+            
+        Returns:
+            List[str]: List of valid LinkedIn URLs that can be scraped
+        """
+        valid_urls = []
+        invalid_urls = []
+        
+        # Define valid LinkedIn URL patterns (including country-specific domains)
+        valid_patterns = [
+            # Profile URLs: /in/username or /in/username/ (www and country-specific domains)
+            r'^https://(?:www|[a-z]{2})\.linkedin\.com/in/[a-zA-Z0-9\-_%]+/?(\?.*)?$',
+            
+            # Company URLs: /company/company-name or /company/company-name/ (www and country-specific domains)
+            r'^https://(?:www|[a-z]{2})\.linkedin\.com/company/[a-zA-Z0-9\-_%]+/?(\?.*)?$',
+            
+            # Post URLs: /posts/username_post-activity-id or /feed/update/urn:li:activity:id
+            r'^https://(?:www|[a-z]{2})\.linkedin\.com/posts/[a-zA-Z0-9\-_%]+-activity-\d+-[a-zA-Z0-9]+/?(\?.*)?$',
+            r'^https://(?:www|[a-z]{2})\.linkedin\.com/feed/update/urn:li:activity:\d+/?(\?.*)?$',
+            
+            # Newsletter URLs: /newsletters/newsletter-name-id
+            r'^https://(?:www|[a-z]{2})\.linkedin\.com/newsletters/[a-zA-Z0-9\-_%]+-\d+/?(\?.*)?$'
+        ]
+        
+        # Define invalid URL patterns to explicitly exclude
+        invalid_patterns = [
+            r'^https://economicgraph\.linkedin\.com/',
+            r'^https://careers\.linkedin\.com/',
+            r'^https://.*\.linkedin\.com/legal/',
+            r'^https://news\.linkedin\.com/',
+            r'^https://.*\.linkedin\.com/learning/',
+            r'^https://business\.linkedin\.com/',
+            r'^https://.*\.linkedin\.com/pulse/',
+            r'^https://help\.linkedin\.com/',
+            r'^https://developer\.linkedin\.com/',
+            r'^https://.*\.linkedin\.com/jobs/',
+            r'^https://.*\.linkedin\.com/sales/',
+            r'^https://.*\.linkedin\.com/talent/',
+            r'^https://.*\.linkedin\.com/marketing/',
+            r'^https://.*\.linkedin\.com/business/learning/',
+            r'^https://.*\.linkedin\.com/checkpoint/',
+            r'^https://.*\.linkedin\.com/authwall/',
+            r'^https://.*\.linkedin\.com/signup/',
+            r'^https://.*\.linkedin\.com/login/',
+            r'^https://.*\.linkedin\.com/start/',
+            r'^https://.*\.linkedin\.com/home/?$',
+            r'^https://.*\.linkedin\.com/?$',
+            r'^https://.*\.linkedin\.com/feed/?$'
+        ]
+        
+        for url in urls:
+            if not url or not isinstance(url, str):
+                invalid_urls.append(url)
+                continue
+                
+            url = url.strip()
+            
+            # Check if URL is in the invalid patterns first
+            is_invalid = any(re.match(pattern, url, re.IGNORECASE) for pattern in invalid_patterns)
+            
+            if is_invalid:
+                invalid_urls.append(url)
+                continue
+            
+            # Check if URL matches any valid pattern
+            is_valid = any(re.match(pattern, url, re.IGNORECASE) for pattern in valid_patterns)
+            
+            if is_valid:
+                # Additional validation: ensure it's a proper LinkedIn domain (www or country-specific)
+                parsed_url = urlparse(url)
+                netloc_lower = parsed_url.netloc.lower()
+                
+                # Check for www.linkedin.com or country-specific domains (like ie.linkedin.com, in.linkedin.com, etc.)
+                if (netloc_lower == 'www.linkedin.com' or 
+                    (netloc_lower.endswith('.linkedin.com') and 
+                    len(netloc_lower.split('.')[0]) == 2)):  # 2-letter country codes
+                    valid_urls.append(url)
+                else:
+                    invalid_urls.append(url)
+            else:
+                invalid_urls.append(url)
+        
+        # Log results
+        logger.info(f"📊 URL Filtering Results:")
+        logger.info(f"   - Total URLs processed: {len(urls)}")
+        logger.info(f"   - Valid URLs found: {len(valid_urls)}")
+        logger.info(f"   - Invalid URLs filtered out: {len(invalid_urls)}")
+        
+        if invalid_urls:
+            logger.debug(f"❌ Filtered out invalid URLs: {invalid_urls[:5]}{'...' if len(invalid_urls) > 5 else ''}")
+        
+        if valid_urls:
+            logger.debug(f"✅ Valid URLs to process: {valid_urls[:5]}{'...' if len(valid_urls) > 5 else ''}")
+        
+        return valid_urls
+    
     async def run_selected_scrapers(self, classified_urls: Dict[str, List[str]], 
-                                  selected_scrapers: List[str]) -> Dict[str, Any]:
+                                  selected_scrapers: List[str], icp_identifier: str = 'default') -> Dict[str, Any]:
         """
         Run the selected scrapers on their respective URL collections
         """
@@ -466,12 +668,33 @@ class LeadGenerationOrchestrator:
                     enable_quality_engine=False,
                     use_mongodb=True
                 )
-                
+                urls_general = classified_urls['general']
+                random.shuffle(urls_general)
                 web_results = web_scraper.run_complete_pipeline(
-                    urls=classified_urls['general'][:10],  # Limit to 10 URLs
+                    urls=urls_general[:5],  # Limit to 5 URLs
                     export_format="json",
-                    generate_final_leads=True
+                    generate_final_leads=True,
+                    icp_identifier=icp_identifier
                 )
+                
+                # Transform and store web scraper results in unified collection
+                if web_results.get('successful_leads'):
+                    try:
+                        # Get the successful leads data
+                        leads_data = web_results['successful_leads']
+                        
+                        # Transform to unified schema and store
+                        unified_stats = self.mongodb_manager.insert_and_transform_to_unified(
+                            leads_data, 'web', icp_identifier
+                        )
+                        
+                        # Update results with unified storage stats
+                        web_results['unified_storage'] = unified_stats
+                        logger.info(f"✅ Web scraper leads stored in unified collection: {unified_stats['success_count']} leads")
+                        
+                    except Exception as e:
+                        logger.error(f"❌ Error storing web scraper leads in unified collection: {e}")
+                        web_results['unified_storage_error'] = str(e)
                 
                 results['web_scraper'] = web_results
                 logger.info(f"✅ Web scraper completed: {web_results.get('summary', {}).get('successful_leads', 0)} leads")
@@ -480,40 +703,134 @@ class LeadGenerationOrchestrator:
                 logger.error(f"❌ Web scraper failed: {e}")
                 results['web_scraper'] = {'error': str(e)}
         
-        # Run Instagram scraper
+        # Run Instagram scraper (optimized)
         if 'instagram' in selected_scrapers and classified_urls.get('instagram'):
-            logger.info("📸 Running Instagram scraper...")
+            logger.info("📸 Running optimized Instagram scraper...")
             try:
-                instagram_scraper = InstagramScraper(
+                # Use configured Instagram scraper settings
+                instagram_scraper = OptimizedInstagramScraper(
                     headless=True,
                     enable_anti_detection=True,
-                    use_mongodb=True
+                    is_mobile=False,
+                    use_mongodb=True,
+                    config=self.instagram_config,
+                    icp_identifier=icp_identifier
                 )
+                urls_instagram = classified_urls['instagram']
+                random.shuffle(urls_instagram)
+                instagram_urls = urls_instagram[:5]  # Limit to 5 URLs for better performance
+                logger.info(f"Processing {len(instagram_urls)} Instagram URLs with optimized scraper...")
+                logger.info(f"Instagram scraper config: {self.instagram_config.max_workers} workers, batch size {self.instagram_config.batch_size}, {self.instagram_config.context_pool_size} contexts")
                 
-                instagram_results = await instagram_scraper.scrape(classified_urls['instagram'][:5]) # Limit to 5 URLs
+                instagram_results = await instagram_scraper.scrape(instagram_urls)
+                
+                # Transform and store Instagram results in unified collection
+                if instagram_results.get('data'):
+                    try:
+                        # Get the Instagram data
+                        leads_data = instagram_results['data']
+                        
+                        # Transform to unified schema and store
+                        unified_stats = self.mongodb_manager.insert_and_transform_to_unified(
+                            leads_data, 'instagram', icp_identifier
+                        )
+                        
+                        # Update results with unified storage stats
+                        instagram_results['unified_storage'] = unified_stats
+                        logger.info(f"✅ Instagram leads stored in unified collection: {unified_stats['success_count']} leads")
+                        
+                        # Log validation statistics
+                        valid_leads = unified_stats['success_count'] + unified_stats['duplicate_count']
+                        invalid_leads = unified_stats['failure_count']
+                        total_leads = unified_stats['total_processed']
+                        
+                        if total_leads > 0:
+                            validation_rate = (valid_leads / total_leads) * 100
+                            logger.info(f"📊 Instagram validation rate: {validation_rate:.1f}% ({valid_leads}/{total_leads} leads passed validation)")
+                            logger.info(f"   - Valid leads: {valid_leads}")
+                            logger.info(f"   - Invalid leads (skipped): {invalid_leads}")
+                            logger.info(f"   - Duplicates: {unified_stats['duplicate_count']}")
+                        
+                    except Exception as e:
+                        logger.error(f"❌ Error storing Instagram leads in unified collection: {e}")
+                        instagram_results['unified_storage_error'] = str(e)
+                
                 results['instagram'] = instagram_results
-                logger.info(f"✅ Instagram scraper completed: {len(instagram_results.get('data', []))} profiles")
+                
+                # Log performance metrics
+                if instagram_results.get('summary', {}).get('performance_metrics'):
+                    metrics = instagram_results['summary']['performance_metrics']
+                    logger.info(f"✅ Instagram scraper completed: {len(instagram_results.get('data', []))} profiles")
+                    logger.info(f"   - Throughput: {metrics.get('throughput_per_second', 0):.2f} URLs/second")
+                    logger.info(f"   - Total time: {instagram_results['summary'].get('total_time_seconds', 0):.2f} seconds")
+                    logger.info(f"   - Success rate: {instagram_results['summary'].get('success_rate', 0):.1f}%")
+                else:
+                    logger.info(f"✅ Instagram scraper completed: {len(instagram_results.get('data', []))} profiles")
                 
             except Exception as e:
                 logger.error(f"❌ Instagram scraper failed: {e}")
                 results['instagram'] = {'error': str(e)}
         
-        # Run LinkedIn scraper
+        # Run LinkedIn scraper (optimized)
         if 'linkedin' in selected_scrapers and classified_urls.get('linkedin'):
-            logger.info("💼 Running LinkedIn scraper...")
+            logger.info("💼 Running optimized LinkedIn scraper...")
             try:
-                linkedin_scraper = LinkedInScraperMain(
+                # Use optimized LinkedIn scraper with rate limit delay
+                linkedin_scraper = OptimizedLinkedInScraper(
                     headless=True,
                     enable_anti_detection=True,
-                    use_mongodb=True
+                    use_mongodb=True,
+                    max_workers=3,
+                    batch_size=5,
+                    rate_limit_delay=1.0,
+                    icp_identifier=icp_identifier
                 )
+                # Filter valid LinkedIn URLs before processing
+                raw_linkedin_urls = classified_urls['linkedin']
+                valid_linkedin_urls = self.filter_valid_linkedin_urls(raw_linkedin_urls)
+                
+                if not valid_linkedin_urls:
+                    logger.warning("⚠️ No valid LinkedIn URLs found after filtering")
+                    results['linkedin'] = {'error': 'No valid LinkedIn URLs to process'}
+
+                random.shuffle(valid_linkedin_urls)
+                linkedin_urls = valid_linkedin_urls[:5]  # Limit to 5 URLs
+                logger.info(f"Processing {len(linkedin_urls)} LinkedIn URLs with optimized scraper...")
+                logger.info(f"LinkedIn scraper config: {linkedin_scraper.max_workers} workers, batch size {linkedin_scraper.batch_size}, rate limit delay {linkedin_scraper.rate_limit_delay}s")
                 
                 linkedin_results = await linkedin_scraper.scrape_async(
-                    classified_urls['linkedin'][:5], # Limit to 5 URLs
+                    linkedin_urls,
                     "linkedin_orchestrator_results.json"
                 )
+                
+                # Transform and store LinkedIn results in unified collection
+                if linkedin_results.get('scraped_data'):
+                    try:
+                        # Get the LinkedIn data
+                        leads_data = linkedin_results['scraped_data']
+                        
+                        # Transform to unified schema and store
+                        unified_stats = self.mongodb_manager.insert_and_transform_to_unified(
+                            leads_data, 'linkedin', icp_identifier
+                        )
+                        
+                        # Update results with unified storage stats
+                        linkedin_results['unified_storage'] = unified_stats
+                        logger.info(f"✅ LinkedIn leads stored in unified collection: {unified_stats['success_count']} leads")
+                        
+                    except Exception as e:
+                        logger.error(f"❌ Error storing LinkedIn leads in unified collection: {e}")
+                        linkedin_results['unified_storage_error'] = str(e)
+                
                 results['linkedin'] = linkedin_results
-                logger.info(f"✅ LinkedIn scraper completed: {linkedin_results.get('scraping_metadata', {}).get('successful_scrapes', 0)} profiles")
+                
+                # Log performance metrics
+                metadata = linkedin_results.get('scraping_metadata', {})
+                logger.info(f"✅ LinkedIn scraper completed: {metadata.get('successful_scrapes', 0)} profiles")
+                logger.info(f"   - Max workers: {metadata.get('max_workers', 'N/A')}")
+                logger.info(f"   - Batch size: {metadata.get('batch_size', 'N/A')}")
+                logger.info(f"   - Sign-up pages detected: {metadata.get('signup_pages_detected', 0)}")
+                logger.info(f"   - Sign-up pages retried: {metadata.get('signup_pages_retried', 0)}")
                 
             except Exception as e:
                 logger.error(f"❌ LinkedIn scraper failed: {e}")
@@ -521,7 +838,11 @@ class LeadGenerationOrchestrator:
         
         # Run YouTube scraper
         if 'youtube' in selected_scrapers and classified_urls.get('youtube'):
-            logger.info("🎥 Running YouTube scraper...")
+            logger.info("🎥 Aborting YouTube scraper...")
+            logger.info("❌ YouTube scraper not implemented")
+            results['youtube'] = {'error': 'YouTube scraper not implemented'}
+
+            """
             try:
                 youtube_scraper = YouTubeScraperInterface(
                     headless=True,
@@ -539,7 +860,8 @@ class LeadGenerationOrchestrator:
             except Exception as e:
                 logger.error(f"❌ YouTube scraper failed: {e}")
                 results['youtube'] = {'error': str(e)}
-        
+            """
+
         return results
     
     def generate_final_report(self, icp_data: Dict[str, Any], selected_scrapers: List[str], 
@@ -575,6 +897,17 @@ class LeadGenerationOrchestrator:
                         "email_based_leads": filtering_stats.get('email_based', 0),
                         "phone_based_leads": filtering_stats.get('phone_based', 0)
                     }
+            elif scraper == 'contact_enhancement':
+                # Handle contact enhancement results separately
+                if result.get('error'):
+                    report_data["results_summary"][scraper] = {"status": "failed", "error": result['error']}
+                else:
+                    report_data["results_summary"][scraper] = {
+                        "status": "success",
+                        "enhanced_leads": result.get('enhanced_leads', 0),
+                        "leads_with_emails": result.get('leads_with_emails', 0),
+                        "leads_with_phones": result.get('leads_with_phones', 0)
+                    }
             elif result.get('error'):
                 report_data["results_summary"][scraper] = {"status": "failed", "error": result['error']}
             else:
@@ -586,10 +919,18 @@ class LeadGenerationOrchestrator:
                         "urls_processed": summary.get('urls_processed', 0)
                     }
                 elif scraper == 'instagram':
+                    summary = result.get('summary', {})
+                    performance_metrics = summary.get('performance_metrics', {})
                     report_data["results_summary"][scraper] = {
                         "status": "success",
                         "profiles_found": len(result.get('data', [])),
-                        "success_rate": result.get('summary', {}).get('success_rate', 0)
+                        "success_rate": summary.get('success_rate', 0),
+                        "total_time_seconds": summary.get('total_time_seconds', 0),
+                        "throughput_per_second": performance_metrics.get('throughput_per_second', 0),
+                        "max_workers": performance_metrics.get('max_workers', 0),
+                        "batch_size": performance_metrics.get('batch_size', 0),
+                        "contexts_used": performance_metrics.get('contexts_used', 0),
+                        "additional_profiles_extracted": summary.get('additional_profiles_extracted', 0)
                     }
                 elif scraper == 'linkedin':
                     metadata = result.get('scraping_metadata', {})
@@ -602,6 +943,23 @@ class LeadGenerationOrchestrator:
                     report_data["results_summary"][scraper] = {
                         "status": "success" if result.get('success') else "failed"
                     }
+                # COMMENTED OUT - crl.py removed from flow
+                # elif scraper == 'web_crawler':
+                #     if result.get('success'):
+                #         summary = result.get('summary', {})
+                #         report_data["results_summary"][scraper] = {
+                #             "status": "success",
+                #             "leads_found": summary.get('total_leads_found', 0),
+                #             "leads_stored": summary.get('leads_stored', 0),
+                #             "duplicates_found": summary.get('duplicates_found', 0),
+                #             "urls_crawled": summary.get('urls_crawled', 0),
+                #             "execution_time_seconds": summary.get('execution_time_seconds', 0)
+                #         }
+                #     else:
+                #         report_data["results_summary"][scraper] = {
+                #             "status": "failed",
+                #             "error": result.get('error', 'Unknown error')
+                #         }
         
         # Save report
         report_filename = f"orchestration_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
@@ -630,10 +988,38 @@ class LeadGenerationOrchestrator:
             logger.info("📋 Step 1: Loading ICP data...")
             icp_data = self.get_hardcoded_icp()
             
+            # Generate ICP identifier
+            icp_identifier = self.generate_icp_identifier(icp_data)
+            logger.info(f"🏷️ Generated ICP identifier: {icp_identifier}")
+            
             print(f"\n📊 ICP SUMMARY:")
             print(f"Product: {icp_data['product_details']['product_name']}")
             print(f"Target Industries: {', '.join(icp_data['icp_information']['target_industry'])}")
             print(f"Company Size: {icp_data['icp_information']['company_size']}")
+            print(f"ICP Identifier: {icp_identifier}")
+            
+            # Step 1.5: Run web crawler for direct URL generation
+            # COMMENTED OUT - crl.py removed from flow
+            # logger.info("🕷️ Step 1.5: Running web crawler for direct URL generation...")
+            # web_crawler_results = None
+            # try:
+            #     web_crawler_results = await run_web_crawler_async(icp_data, icp_identifier)
+            #     
+            #     if web_crawler_results['success']:
+            #         summary = web_crawler_results['summary']
+            #         print(f"\n🕷️ WEB CRAWLER RESULTS:")
+            #         print(f"✅ URLs crawled: {summary['urls_crawled']}")
+            #         print(f"✅ Leads found: {summary['total_leads_found']}")
+            #         print(f"✅ Leads stored: {summary['leads_stored']}")
+            #         print(f"✅ Duplicates found: {summary['duplicates_found']}")
+            #         print(f"✅ Execution time: {summary['execution_time_seconds']:.2f}s")
+            #     else:
+            #         print(f"\n❌ Web crawler failed: {web_crawler_results.get('error', 'Unknown error')}")
+            #         
+            # except Exception as e:
+            #     logger.error(f"❌ Error in web crawler: {e}")
+            #     print(f"\n❌ Web crawler error: {e}")
+            #     web_crawler_results = {'success': False, 'error': str(e)}
             
             # Step 2: Get user scraper selection
             logger.info("🎯 Step 2: Getting scraper selection...")
@@ -649,7 +1035,7 @@ class LeadGenerationOrchestrator:
             
             # Step 4: Collect URLs using web_url_scraper
             logger.info("🔍 Step 4: Collecting URLs...")
-            classified_urls = await self.collect_urls_from_queries(queries)
+            classified_urls = await self.collect_urls_from_queries(queries, icp_identifier)
             
             total_urls = sum(len(urls) for urls in classified_urls.values())
             print(f"\n📊 URL COLLECTION SUMMARY:")
@@ -661,7 +1047,7 @@ class LeadGenerationOrchestrator:
             
             # Step 5: Run selected scrapers
             logger.info("🚀 Step 5: Running scrapers...")
-            results = await self.run_selected_scrapers(classified_urls, selected_scrapers)
+            results = await self.run_selected_scrapers(classified_urls, selected_scrapers, icp_identifier)
             
             # Step 6: Filter and process leads using MongoDBLeadProcessor
             logger.info("🧹 Step 6: Filtering and processing leads...")
@@ -699,8 +1085,42 @@ class LeadGenerationOrchestrator:
                 logger.error(f"❌ Error in lead filtering: {e}")
                 results['lead_filtering'] = {'error': str(e)}
 
-            # Step 7: Generate final report
-            logger.info("📊 Step 7: Generating final report...")
+            # Step 7: Enhance leads with contact information using contact scraper
+            logger.info("📞 Step 7: Enhancing leads with contact information...")
+            try:
+                contact_enhancement_results = await run_optimized_contact_scraper(
+                    limit=0,  # Process all leads without contact info
+                    batch_size=20
+                )
+                
+                print(f"\n📞 CONTACT ENHANCEMENT SUMMARY:")
+                print(f"Total leads enhanced: {len(contact_enhancement_results)}")
+                
+                # Count leads with emails and phone numbers
+                leads_with_emails = sum(1 for lead in contact_enhancement_results if lead.get('emails'))
+                leads_with_phones = sum(1 for lead in contact_enhancement_results if lead.get('phone_numbers'))
+                
+                print(f"Leads with emails found: {leads_with_emails}")
+                print(f"Leads with phone numbers found: {leads_with_phones}")
+                
+                # Add contact enhancement results to the main results
+                results['contact_enhancement'] = {
+                    'enhanced_leads': len(contact_enhancement_results),
+                    'leads_with_emails': leads_with_emails,
+                    'leads_with_phones': leads_with_phones,
+                    'enhancement_data': contact_enhancement_results
+                }
+                
+            except Exception as e:
+                logger.error(f"❌ Error in contact enhancement: {e}")
+                results['contact_enhancement'] = {'error': str(e)}
+
+            # Step 8: Generate final report
+            logger.info("📊 Step 8: Generating final report...")
+            # Add web crawler results to the main results
+            # COMMENTED OUT - crl.py removed from flow
+            # if web_crawler_results:
+            #     results['web_crawler'] = web_crawler_results
             report_file = self.generate_final_report(icp_data, selected_scrapers, results)
             
             # Final summary
@@ -722,6 +1142,25 @@ class LeadGenerationOrchestrator:
                 print(f"✅ Leads processed: {filtering_stats['inserted']} leads extracted and stored")
                 print(f"📧 Email-based leads: {filtering_stats.get('email_based', 0)}")
                 print(f"📞 Phone-based leads: {filtering_stats.get('phone_based', 0)}")
+            
+            # Show contact enhancement results if available
+            if 'contact_enhancement' in results and not results['contact_enhancement'].get('error'):
+                contact_stats = results['contact_enhancement']
+                print(f"\n📞 CONTACT ENHANCEMENT RESULTS:")
+                print(f"✅ Leads enhanced: {contact_stats['enhanced_leads']} leads with contact info added")
+                print(f"📧 Leads with emails: {contact_stats['leads_with_emails']}")
+                print(f"📞 Leads with phone numbers: {contact_stats['leads_with_phones']}")
+            
+            # Show web crawler results if available
+            # COMMENTED OUT - crl.py removed from flow
+            # if 'web_crawler' in results and results['web_crawler'].get('success'):
+            #     web_stats = results['web_crawler']['summary']
+            #     print(f"\n🕷️ WEB CRAWLER RESULTS:")
+            #     print(f"✅ URLs crawled: {web_stats['urls_crawled']}")
+            #     print(f"✅ Leads found: {web_stats['total_leads_found']}")
+            #     print(f"✅ Leads stored: {web_stats['leads_stored']}")
+            #     print(f"✅ Duplicates found: {web_stats['duplicates_found']}")
+            #     print(f"⏱️ Execution time: {web_stats['execution_time_seconds']:.2f}s")
             
             if report_file:
                 print(f"📊 Final report: {report_file}")

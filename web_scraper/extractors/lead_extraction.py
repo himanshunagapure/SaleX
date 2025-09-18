@@ -604,13 +604,20 @@ class BusinessInfoExtractor:
         
         service_patterns = {
             'group_travel': ['group travel', 'group tour', 'group trip'],
-            'charter_bus': ['charter bus', 'bus charter', 'bus rental'],
             'corporate_travel': ['corporate travel', 'business travel'],
             'event_transportation': ['event transportation', 'wedding transportation'],
-            'airport_shuttle': ['airport shuttle', 'airport transfer'],
             'sightseeing': ['sightseeing', 'city tour', 'guided tour'],
             'long_distance': ['long distance', 'interstate', 'cross country'],
-            'local_transport': ['local transport', 'city bus', 'commuter']
+            'local_transport': ['local transport', 'city bus', 'commuter'],
+            'consulting': ['consulting', 'advisory', 'advice', 'strategy'],
+            'training': ['training', 'workshop', 'course', 'bootcamp'],
+            'software': ['software', 'SaaS', 'platform', 'application', 'cloud'],
+            'marketing': ['marketing', 'advertising', 'SEO', 'branding', 'promotion'],
+            'ecommerce': ['shop', 'store', 'retail', 'catalog', 'ecommerce'],
+            'finance': ['loan', 'insurance', 'investment', 'mortgage', 'credit'],
+            'real_estate': ['property', 'real estate', 'broker', 'realtor', 'lease'],
+            'event_services': ['event', 'conference', 'wedding', 'seminar', 'expo'],
+            'healthcare': ['clinic', 'hospital', 'doctor', 'pharmacy', 'healthcare']
         }
         
         for service, patterns in service_patterns.items():
@@ -1578,18 +1585,15 @@ def extract_lead_information(html: str, text: str, url: str = "",
             "planning to visit", "looking for transport", "itinerary",
             "bus booking", "charter service", "hire a bus", "reserve seats"
         ],
+        "purchase_intent": ["buy", "purchase", "order", "get started", "subscribe"],
+        "quote_request": ["request a quote", "get a quote", "pricing", "estimate"],
+        "demo_interest": ["demo", "trial", "schedule a demo", "free trial"],
+        "service_inquiry": ["services", "solutions", "offerings", "learn more"],
+        "job_hiring": ["hiring", "apply now", "careers", "recruiting"],
+        "support_request": ["help", "support", "customer service", "issue", "complaint"],
         "corporate_travel": [
             "corporate tour", "office trip", "team outing",
             "company travel", "business delegation", "staff transport"
-        ],
-        "group_travel": [
-            "school trip", "college trip", "student tour",
-            "family trip", "friends trip", "group booking", "wedding travel",
-            "event transportation", "pilgrimage", "religious tour"
-        ],
-        "past_travel": [
-            "we traveled", "last trip", "previous booking", 
-            "used your service", "journey last year"
         ],
         "general_inquiry": [
             "need a quote", "request for quotation", "price inquiry",
@@ -1604,16 +1608,13 @@ def extract_lead_information(html: str, text: str, url: str = "",
         "general_inquiry": 1.0,
         "past_travel": 0.4
     }
-    print("\nStill running: reached suspicious place")
     text_lower = text.lower()
     intent_indicators: List[Dict[str, str]] = []
-    print("\nStill running: Passed suspicious place")
 
     for category, keywords in intent_categories.items():
         for keyword in keywords:
             if keyword in text_lower:
                 intent_indicators.append({"category": category, "match": keyword})
-    print("\nStill running: Passed suspicious place 2")
     # Compute intent score (take strongest signal)
     intent_score = max(
         (intent_weights.get(ind["category"], 0) for ind in intent_indicators),
@@ -1631,8 +1632,6 @@ def extract_lead_information(html: str, text: str, url: str = "",
     # print('\n')
     # print(data_confidence)
     # print("\n================End==========================\n")
-
-    print("\nStill running: Passed suspicious place 3")
     # Calculate lead score
     lead_score = scorer.calculate_lead_score(contact_info, business_info, intent_indicators, data_confidence)
     # print("\n================Start: Inside Lead extraction py==========================\n")
