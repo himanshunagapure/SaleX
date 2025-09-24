@@ -175,16 +175,18 @@ class MongoDBManager:
             # Add/update metadata
             lead_data['metadata']['scraped_at'] = datetime.utcnow()
             
-            # Only save "profile" type leads to unified_leads collection
+            # Allow all content types (profile, article, video, etc.) in unified collection
             content_type = lead_data.get('content_type', '').lower()
-            if content_type != 'profile':
-                logger.info(f"ℹ️ Skipped non-profile lead (content_type: {content_type}): {lead_data.get('url', 'unknown')}")
-                return False
             
             # Ensure ICP identifier exists
             if 'icp_identifier' not in lead_data:
                 lead_data['icp_identifier'] = 'default'
             
+            # Validate with generic unified rules before inserting
+            if not self._is_valid_unified_lead(lead_data):
+                logger.info(f"ℹ️ Skipped invalid unified lead (failed validation): {lead_data.get('url', 'unknown')}")
+                return False
+
             # Insert into unified collection
             result = self.db[self.collections['unified']].insert_one(lead_data)
             
@@ -238,16 +240,19 @@ class MongoDBManager:
                 # Add metadata
                 lead_data['metadata']['scraped_at'] = datetime.utcnow()
                 
-                # Only save "profile" type leads to unified_leads collection
+                # Allow all content types (profile, article, video, etc.) in unified collection
                 content_type = lead_data.get('content_type', '').lower()
-                if content_type != 'profile':
-                    logger.info(f"ℹ️ Skipped non-profile lead (content_type: {content_type}): {lead_data.get('url', 'unknown')}")
-                    continue
                 
                 # Ensure ICP identifier exists
                 if 'icp_identifier' not in lead_data:
                     lead_data['icp_identifier'] = 'default'
                 
+                # Validate with generic unified rules before inserting
+                if not self._is_valid_unified_lead(lead_data):
+                    logger.info(f"ℹ️ Skipped invalid unified lead (failed validation): {lead_data.get('url', 'unknown')}")
+                    failure_count += 1
+                    continue
+
                 # Insert into unified collection
                 result = self.db[self.collections['unified']].insert_one(lead_data)
                 success_count += 1
@@ -677,8 +682,8 @@ class MongoDBManager:
         
         Validation rules:
         1. If email or phone is present, the lead is valid
-        2. If email and phone are both empty, check if username, full_name, and bio are present
-        3. If these are also missing, skip the lead
+        2. If email and phone are both empty, lead is valid if at least one of username or full_name is present
+        3. Otherwise, skip the lead
         
         Args:
             instagram_data: Instagram lead data dictionary
@@ -687,21 +692,23 @@ class MongoDBManager:
             bool: True if lead is valid, False if should be skipped
         """
         try:
+            def safe_str(value: Any) -> str:
+                return value.strip() if isinstance(value, str) else ''
+
             # Check if email or phone is present
-            business_email = instagram_data.get('business_email', '').strip()
-            business_phone = instagram_data.get('business_phone_number', '').strip()
+            business_email = safe_str(instagram_data.get('business_email'))
+            business_phone = safe_str(instagram_data.get('business_phone_number'))
             
             if business_email or business_phone:
                 logger.debug(f"✅ Instagram lead valid - has contact info: {instagram_data.get('username', 'unknown')}")
                 return True
             
-            # If no contact info, check profile information
-            username = instagram_data.get('username', '').strip()
-            full_name = instagram_data.get('full_name', '').strip()
-            bio = instagram_data.get('biography', '').strip()
+            # If no contact info, check minimal profile information per unified rules
+            username = safe_str(instagram_data.get('username'))
+            full_name = safe_str(instagram_data.get('full_name'))
             
-            if username and full_name and bio:
-                logger.debug(f"✅ Instagram lead valid - has profile info: {username}")
+            if username or full_name:
+                logger.debug(f"✅ Instagram lead valid - has identifier: {username or full_name}")
                 return True
             
             # Lead doesn't meet validation criteria
@@ -1362,82 +1369,42 @@ class MongoDBManager:
             logger.error(f"❌ Error checking for duplicate lead: {e}")
             return False  # If error, assume not duplicate to avoid data loss
 
-    def insert_and_transform_to_unified(self, source_data: List[Dict[str, Any]], platform: str, icp_identifier: str = 'default') -> Dict[str, int]:
+    # Removed transform-and-insert orchestration method; scrapers/orchestrator will prepare unified data,
+    # and only insert_batch_unified_leads will be used for persistence.
+
+    def _is_valid_unified_lead(self, unified_data: Dict[str, Any]) -> bool:
         """
-        Transform and insert leads into unified collection with duplication check
-        
-        Args:
-            source_data: List of platform-specific lead data
-            platform: Source platform ('instagram', 'linkedin', 'youtube', 'web')
-            icp_identifier: ICP identifier to track which ICP this data belongs to
-            
-        Returns:
-            Dict with success and failure counts
+        Generic validation for unified lead prior to insertion.
+        Rules:
+        - Valid if there is at least one email or phone number in contact.
+        - If both are empty/missing, valid if at least one identifier among
+          profile.full_name, profile.username, company_name, or content.author_name
+          is present (non-empty after trim).
+        - Otherwise invalid.
         """
-        success_count = 0
-        failure_count = 0
-        duplicate_count = 0
-        
-        transform_functions = {
-            'instagram': self.transform_instagram_to_unified,
-            'linkedin': self.transform_linkedin_to_unified,
-            'youtube': self.transform_youtube_to_unified,
-            'web': self.transform_web_to_unified
-        }
-        
-        transform_func = transform_functions.get(platform)
-        if not transform_func:
-            logger.error(f"❌ No transform function for platform: {platform}")
-            return {'success_count': 0, 'duplicate_count': 0, 'failure_count': len(source_data), 'total_processed': len(source_data)}
-        
-        for data in source_data:
-            try:
-                # For Instagram, validate lead data before transformation
-                if platform == 'instagram':
-                    if not self._validate_instagram_lead(data):
-                        logger.warning(f"⚠️ Skipped invalid Instagram lead: {data.get('username', 'unknown')}")
-                        failure_count += 1
-                        continue
-                
-                # Transform to unified schema
-                unified_data = transform_func(data, icp_identifier)
-                
-                if not unified_data:  # 👈 Skip invalid ones
-                    logger.warning(f"⚠️ Skipped invalid {platform} data: {data.get('full_name') or data.get('author_name')}")
-                    failure_count += 1
-                    continue
-                
-                # Only save "profile" type leads to unified_leads collection
-                content_type = unified_data.get('content_type', '').lower()
-                if content_type != 'profile':
-                    logger.info(f"ℹ️ Skipped non-profile lead (content_type: {content_type}): {unified_data.get('url', 'unknown')}")
-                    continue
-                
-                # Check for duplicates before inserting
-                if self._is_duplicate_lead(unified_data):
-                    duplicate_count += 1
-                    logger.warning(f"⚠️ Duplicate lead detected and skipped: {unified_data.get('url', 'unknown')}")
-                    continue
-                    
-                # Insert into unified collection
-                result = self.db[self.collections['unified']].insert_one(unified_data)
-                success_count += 1
-                
-            except DuplicateKeyError:
-                duplicate_count += 1
-                logger.warning(f"⚠️ Duplicate unified lead for URL: {data.get('url')}")
-            except Exception as e:
-                failure_count += 1
-                logger.error(f"❌ Failed to transform and insert unified lead: {e}")
-        
-        logger.info(f"📊 Unified transformation completed for {platform} - Success: {success_count}, Duplicates: {duplicate_count}, Failures: {failure_count}")
-        
-        return {
-            'success_count': success_count,
-            'duplicate_count': duplicate_count,
-            'failure_count': failure_count,
-            'total_processed': len(source_data)
-        }
+        try:
+            contact = unified_data.get('contact', {}) or {}
+            emails = contact.get('emails') or []
+            phones = contact.get('phone_numbers') or []
+            if any(isinstance(e, str) and e.strip() for e in emails) or any(isinstance(p, str) and p.strip() for p in phones):
+                return True
+            profile = unified_data.get('profile', {}) or {}
+            full_name = profile.get('full_name') or ''
+            username = profile.get('username') or ''
+            company_name = (unified_data.get('company_name') or '')
+            content = unified_data.get('content', {}) or {}
+            author_name = content.get('author_name') or ''
+            if (
+                (isinstance(full_name, str) and full_name.strip()) or
+                (isinstance(username, str) and username.strip()) or
+                (isinstance(company_name, str) and company_name.strip()) or
+                (isinstance(author_name, str) and author_name.strip())
+            ):
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"❌ Error during unified lead validation: {e}")
+            return False
     
     def get_unified_leads_without_contacts(self, limit: int = 0) -> List[Dict[str, Any]]:
         """Get unified leads that don't have contact information"""

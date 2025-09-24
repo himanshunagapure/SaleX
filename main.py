@@ -27,7 +27,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 # Import scrapers
 from web_url_scraper.main import main as web_url_scraper_main, initialize_application
-from web_url_scraper.database_service import get_urls_by_type, get_url_type_statistics
+from web_url_scraper.database_service import get_urls_by_type, get_url_type_statistics, get_urls_by_type_and_icp
 from web_scraper.main_app import WebScraperOrchestrator
 from instagram_scraper.main_optimized import OptimizedInstagramScraper, ScrapingConfig
 from linkedin_scraper.main import LinkedInScraperMain, OptimizedLinkedInScraper
@@ -36,6 +36,15 @@ from database.mongodb_manager import get_mongodb_manager
 from filter_web_lead import MongoDBLeadProcessor
 from contact_scraper import run_optimized_contact_scraper
 # from web.crl import run_web_crawler_async  # Commented out - crl.py removed from flow
+
+# Scraper registry centralization
+from scraper_registry import (
+    get_available_scrapers,
+    get_scraper_names,
+    get_site_filter,
+    get_prompt_block,
+    get_url_type_map,
+)
 
 # Import Gemini AI (assuming it's available)
 try:
@@ -58,12 +67,8 @@ class LeadGenerationOrchestrator:
     def __init__(self):
         """Initialize the orchestrator"""
         self.mongodb_manager = None
-        self.available_scrapers = {
-            'web_scraper': True,
-            'instagram': True,
-            'linkedin': True,
-            'youtube': True
-        }
+        # Centralized available scrapers
+        self.available_scrapers = get_available_scrapers()
         
         # Instagram scraper performance configuration
         self.instagram_config = ScrapingConfig(
@@ -233,46 +238,46 @@ class LeadGenerationOrchestrator:
         
         return selected if selected else ['web_scraper']
     
-    def configure_instagram_performance(self):
-        """Configure Instagram scraper performance settings"""
-        print("\n⚡ INSTAGRAM SCRAPER PERFORMANCE CONFIGURATION")
-        print("=" * 60)
-        print("Current settings:")
-        print(f"  - Max workers: {self.instagram_config.max_workers}")
-        print(f"  - Batch size: {self.instagram_config.batch_size}")
-        print(f"  - Context pool size: {self.instagram_config.context_pool_size}")
-        print(f"  - Rate limit delay: {self.instagram_config.rate_limit_delay}s")
-        print(f"  - Context reuse limit: {self.instagram_config.context_reuse_limit}")
+    # def configure_instagram_performance(self):
+    #     """Configure Instagram scraper performance settings"""
+    #     print("\n⚡ INSTAGRAM SCRAPER PERFORMANCE CONFIGURATION")
+    #     print("=" * 60)
+    #     print("Current settings:")
+    #     print(f"  - Max workers: {self.instagram_config.max_workers}")
+    #     print(f"  - Batch size: {self.instagram_config.batch_size}")
+    #     print(f"  - Context pool size: {self.instagram_config.context_pool_size}")
+    #     print(f"  - Rate limit delay: {self.instagram_config.rate_limit_delay}s")
+    #     print(f"  - Context reuse limit: {self.instagram_config.context_reuse_limit}")
         
-        choice = input("\nConfigure Instagram performance? (y/n, default: n): ").strip().lower()
+    #     choice = input("\nConfigure Instagram performance? (y/n, default: n): ").strip().lower()
         
-        if choice == 'y':
-            try:
-                max_workers = input(f"Max concurrent workers (current: {self.instagram_config.max_workers}): ").strip()
-                if max_workers.isdigit():
-                    self.instagram_config.max_workers = int(max_workers)
+    #     if choice == 'y':
+    #         try:
+    #             max_workers = input(f"Max concurrent workers (current: {self.instagram_config.max_workers}): ").strip()
+    #             if max_workers.isdigit():
+    #                 self.instagram_config.max_workers = int(max_workers)
                 
-                batch_size = input(f"Batch size (current: {self.instagram_config.batch_size}): ").strip()
-                if batch_size.isdigit():
-                    self.instagram_config.batch_size = int(batch_size)
+    #             batch_size = input(f"Batch size (current: {self.instagram_config.batch_size}): ").strip()
+    #             if batch_size.isdigit():
+    #                 self.instagram_config.batch_size = int(batch_size)
                 
-                context_pool_size = input(f"Context pool size (current: {self.instagram_config.context_pool_size}): ").strip()
-                if context_pool_size.isdigit():
-                    self.instagram_config.context_pool_size = int(context_pool_size)
+    #             context_pool_size = input(f"Context pool size (current: {self.instagram_config.context_pool_size}): ").strip()
+    #             if context_pool_size.isdigit():
+    #                 self.instagram_config.context_pool_size = int(context_pool_size)
                 
-                rate_limit_delay = input(f"Rate limit delay in seconds (current: {self.instagram_config.rate_limit_delay}): ").strip()
-                if rate_limit_delay.replace('.', '').isdigit():
-                    self.instagram_config.rate_limit_delay = float(rate_limit_delay)
+    #             rate_limit_delay = input(f"Rate limit delay in seconds (current: {self.instagram_config.rate_limit_delay}): ").strip()
+    #             if rate_limit_delay.replace('.', '').isdigit():
+    #                 self.instagram_config.rate_limit_delay = float(rate_limit_delay)
                 
-                print(f"\n✅ Instagram performance settings updated!")
-                print(f"  - Max workers: {self.instagram_config.max_workers}")
-                print(f"  - Batch size: {self.instagram_config.batch_size}")
-                print(f"  - Context pool size: {self.instagram_config.context_pool_size}")
-                print(f"  - Rate limit delay: {self.instagram_config.rate_limit_delay}s")
+    #             print(f"\n✅ Instagram performance settings updated!")
+    #             print(f"  - Max workers: {self.instagram_config.max_workers}")
+    #             print(f"  - Batch size: {self.instagram_config.batch_size}")
+    #             print(f"  - Context pool size: {self.instagram_config.context_pool_size}")
+    #             print(f"  - Rate limit delay: {self.instagram_config.rate_limit_delay}s")
                 
-            except Exception as e:
-                logger.warning(f"⚠️ Error configuring Instagram performance: {e}")
-                print("Using default settings.")
+    #         except Exception as e:
+    #             logger.warning(f"⚠️ Error configuring Instagram performance: {e}")
+    #             print("Using default settings.")
     
     async def generate_search_queries(self, icp_data: Dict[str, Any], selected_scrapers: List[str]) -> List[str]:
         """
@@ -307,6 +312,38 @@ class LeadGenerationOrchestrator:
         except Exception as e:
             logger.error(f"❌ Error generating queries with Gemini: {e}")
             return self._get_fallback_queries(icp_data)
+
+    async def generate_platform_queries(self, icp_data: Dict[str, Any], platform: str) -> List[str]:
+        """
+        Generate platform-specific search queries only (no general queries).
+        Ensures queries include strict site: filters and helpful operators.
+        """
+        platform = platform.strip().lower()
+        if not self.gemini_model:
+            return self._get_fallback_platform_queries(icp_data, platform)
+
+        try:
+            prompt = self._create_platform_prompt(icp_data, platform)
+            logger.info(f"🤖 Generating platform-specific queries for {platform} with Gemini AI...")
+            response = await asyncio.to_thread(self.gemini_model.generate_content, prompt)
+            raw_lines = (response.text or '').split('\n')
+            # Clean and keep only non-empty lines
+            queries = []
+            for line in raw_lines:
+                q = line.strip().lstrip('0123456789.-• "\'"\'"').rstrip('"\'"\'"')
+                if q and len(q) > 10:
+                    queries.append(q)
+            # De-duplicate while preserving order
+            seen = set()
+            deduped = []
+            for q in queries:
+                if q not in seen:
+                    seen.add(q)
+                    deduped.append(q)
+            return deduped[:8]
+        except Exception as e:
+            logger.error(f"❌ Error generating platform queries with Gemini: {e}")
+            return self._get_fallback_platform_queries(icp_data, platform)
     
     def _add_platform_specific_queries(self, base_queries: List[str], selected_scrapers: List[str]) -> List[str]:
         """
@@ -315,27 +352,27 @@ class LeadGenerationOrchestrator:
         all_queries = base_queries.copy()
         
         # Platform keywords mapping
-        platform_keywords = {
-            'instagram': 'instagram',
-            'linkedin': 'linkedin', 
-            'youtube': 'youtube'
-        }
+        # Obtain site filter per scraper from registry
         
         # Add platform-specific queries
         for scraper in selected_scrapers:
-            if scraper in platform_keywords:
-                platform_keyword = platform_keywords[scraper]
+            platform_keyword = get_site_filter(scraper)
+            if platform_keyword:
                 logger.info(f"🔍 Adding {platform_keyword} specific queries...")
                 
                 for query in base_queries:
-                    # Add platform keyword to the query
-                    platform_query = f"{query} {platform_keyword}"
+                    # Strengthen with intitle and exact persona/industry signals if present
+                    enhanced_query = query
+                    if 'director' in query.lower() or 'manager' in query.lower() or 'head' in query.lower():
+                        enhanced_query = f'intitle:("director" OR "manager" OR "head") {query}'
+                    # Add platform site filter
+                    platform_query = f"{enhanced_query} {platform_keyword}".strip()
                     all_queries.append(platform_query)
         
         logger.info(f"📊 Query breakdown:")
         logger.info(f"  - Base queries: {len(base_queries)}")
         for scraper in selected_scrapers:
-            if scraper in platform_keywords:
+            if get_site_filter(scraper):
                 logger.info(f"  - {scraper} queries: {len(base_queries)}")
         
         return all_queries
@@ -344,8 +381,43 @@ class LeadGenerationOrchestrator:
         product = icp_data.get("product_details", {})
         icp = icp_data.get("icp_information", {})
         
+        # Process regions to filter out generic/invalid location terms
+        regions = icp.get("region", [])
+        valid_regions = []
+        
+        # List of generic terms that should not be used as location filters
+        generic_terms = [
+            "major cities", "metropolitan areas", "urban areas", "rural areas",
+            "tourist destinations", "business districts", "commercial areas",
+            "developed countries", "developing countries", "emerging markets",
+            "tier 1 cities", "tier 2 cities", "suburbs", "downtown areas"
+        ]
+        
+        for region in regions:
+            # Convert to lowercase for comparison
+            region_lower = region.lower().strip()
+            
+            # Skip empty or generic terms
+            if region_lower and region_lower not in generic_terms:
+                # Additional check: skip very short terms that are likely generic
+                if len(region_lower) > 3:
+                    valid_regions.append(region)
+        
+        # Create location context for the prompt
+        location_instruction = ""
+        if valid_regions:
+            location_instruction = f"""
+            IMPORTANT: Include location-specific search queries using these valid regions: {', '.join(valid_regions)}
+            - Incorporate these location terms naturally into the search queries
+            - Use variations like "in [location]", "[location] based", "[location] companies"
+            """
+        else:
+            location_instruction = """
+            IMPORTANT: Keep all search queries generic without location-specific terms since no valid regions were specified.
+            """
+
         prompt = f"""
-        Based on the following Ideal Customer Profile (ICP), generate 15 specific Google search queries that would help find potential customers:
+        Based on the following Ideal Customer Profile (ICP), generate 6 specific Google search queries that would help find potential customers:
 
         BUSINESS DETAILS:
         - Product/Service: {product.get("product_name", "Not specified")}
@@ -360,6 +432,8 @@ class LeadGenerationOrchestrator:
         - Geographic Regions: {', '.join(icp.get("region", []))}
         - Budget Range: {icp.get("budget_range", "Not specified")}
         - Occasions: {', '.join(icp.get("occasions", []))}
+        
+        {location_instruction}
 
         Generate search queries that would help identify potential customers who:
         1. Are actively looking for solutions to the problems this product/service solves
@@ -376,6 +450,41 @@ class LeadGenerationOrchestrator:
         - Timeline indicators ("2024", "2025", "looking for", "need", "planning")
 
         Format: Return only the search queries, one per line, without numbering or additional text.
+        """
+        return prompt
+
+    def _create_platform_prompt(self, icp_data: Dict[str, Any], platform: str) -> str:
+        """Create a strict platform-specific prompt for Gemini queries."""
+        product = icp_data.get("product_details", {})
+        icp = icp_data.get("icp_information", {})
+
+        platform = platform.lower()
+        platform_block = get_prompt_block(platform)
+
+        prompt = f"""
+        Based on the following Ideal Customer Profile (ICP), generate 4 platform-specific Google queries ONLY for {platform}.
+
+        BUSINESS DETAILS:
+        - Product/Service: {product.get("product_name", "Not specified")}
+        - Category: {product.get("product_category", "Not specified")}
+        - Key Benefits: {', '.join(product.get("usps", []))}
+        - Problems Solved: {', '.join(product.get("pain_points_solved", []))}
+
+        TARGET CUSTOMER PROFILE:
+        - Target Industries: {', '.join(icp.get("target_industry", []))}
+        - Decision Makers: {', '.join(icp.get("decision_maker_persona", []))}
+        - Regions: {', '.join(icp.get("region", []))}
+
+        REQUIREMENTS:
+        {platform_block}
+        - Reflect ICP signals (industries, personas, occasions, competitors) in phrasing.
+        - Use boolean operators (OR) and quotes for exact titles when useful.
+        - Return queries ONLY (one per line). Do NOT include any commentary or numbering.
+
+        EXAMPLE STYLE (do not copy textually):
+        - intitle:"marketing director" "SaaS" site:linkedin.com/in
+        - ("Sports Team Manager" OR "Club Organizer") "team travel" site:instagram.com
+        - intitle:"travel agency" (corporate OR group) india -site:instagram.com -site:linkedin.com -site:youtube.com
         """
         return prompt
     
@@ -422,6 +531,46 @@ class LeadGenerationOrchestrator:
         ]
         
         return base_queries
+
+    def _get_fallback_platform_queries(self, icp_data: Dict[str, Any], platform: str) -> List[str]:
+        """Fallback queries tailored to a specific platform."""
+        platform = platform.lower()
+        icp = icp_data.get('icp_information', {})
+        industries = icp.get('target_industry', [])
+        personas = icp.get('decision_maker_persona', [])
+        regions = icp.get('region', [])
+
+        def pick_first(items: List[str]) -> str:
+            return items[0] if items else ''
+
+        industry = pick_first(industries)
+        persona = pick_first(personas)
+        region = pick_first(regions)
+
+        if platform == 'linkedin':
+            return [
+                f'intitle:"{persona or "marketing director"}" "{industry or "SaaS"}" {region or "India"} site:linkedin.com/in'.strip(),
+                f'("{persona or "travel manager"}" OR "event coordinator") "group travel" {region or "India"} site:linkedin.com/company',
+                f'intitle:"operations head" "corporate travel" {region or "India"} site:linkedin.com/in'
+            ]
+        if platform == 'instagram':
+            return [
+                f'("{persona or "club organizer"}" OR "sports team manager") "team travel" {region or "India"} site:instagram.com',
+                f'intitle:"travel agency" (corporate OR group) {region or "India"} site:instagram.com',
+                f'("wedding planner" OR "event manager") "guest transport" {region or "India"} site:instagram.com'
+            ]
+        if platform == 'youtube':
+            return [
+                f'intitle:"corporate travel" {region or "India"} site:youtube.com/@',
+                f'("travel agency" OR "tour operator") "group travel" {region or "India"} site:youtube.com/channel',
+                f'intitle:"team travel" {region or "India"} site:youtube.com'
+            ]
+        # web_scraper/general
+        return [
+            f'intitle:"travel agency" (corporate OR group) {region or "India"} -site:instagram.com -site:linkedin.com -site:youtube.com',
+            f'("bus charter" OR "coach hire") {region or "India"} (corporate OR wedding) -site:instagram.com -site:linkedin.com -site:youtube.com',
+            f'intitle:"tour operator" "group travel" {region or "India"} -site:instagram.com -site:linkedin.com -site:youtube.com'
+        ]
     
     async def collect_urls_from_queries(self, queries: List[str], icp_identifier: str = 'default') -> Dict[str, List[str]]:
         """
@@ -482,18 +631,14 @@ class LeadGenerationOrchestrator:
             stats = get_url_type_statistics()
             logger.info(f"📊 Database contains {stats['total_urls']} URLs across {stats['unique_url_types']} types")
             
-            # Initialize classified_urls dictionary
-            classified_urls = {
-                'instagram': [],
-                'linkedin': [],
-                'youtube': [],
-                'general': []
-            }
+            # Initialize classified_urls dictionary from registry url types
+            url_types = set(get_url_type_map().values()) or {'general'}
+            classified_urls = {url_type: [] for url_type in url_types}
             
             # Get URLs for each type directly from database
-            for url_type in ['instagram', 'linkedin', 'youtube', 'general']:
+            for url_type in classified_urls.keys():
                 try:
-                    urls_data = get_urls_by_type(url_type)
+                    urls_data = get_urls_by_type_and_icp(url_type, icp_identifier)
                     # Extract just the URLs from the database documents
                     urls = [doc['url'] for doc in urls_data if 'url' in doc]
                     classified_urls[url_type] = urls
@@ -678,15 +823,26 @@ class LeadGenerationOrchestrator:
                 )
                 
                 # Transform and store web scraper results in unified collection
+                # Collect unified leads from web scraper results if provided
+                unified_leads_web = []
                 if web_results.get('successful_leads'):
                     try:
                         # Get the successful leads data
-                        leads_data = web_results['successful_leads']
+                        leads_data = web_results['unified_leads']
                         
-                        # Transform to unified schema and store
-                        unified_stats = self.mongodb_manager.insert_and_transform_to_unified(
-                            leads_data, 'web', icp_identifier
-                        )
+                        # # Transform to unified schema and store
+                        # # Transform locally (web scraper exposes final leads, convert here) then save
+                        # unified_leads_web = []
+                        # for lead in leads_data:
+                        #     try:
+                        #         u = web_scraper._transform_web_final_to_unified(lead, icp_identifier)
+                        #         if u:
+                        #             unified_leads_web.append(u)
+                        #     except Exception:
+                        #         continue
+                        unified_stats = self.mongodb_manager.insert_batch_unified_leads(leads_data) if leads_data else {
+                            'success_count': 0,'duplicate_count':0,'failure_count':0,'total_processed':0
+                        }
                         
                         # Update results with unified storage stats
                         web_results['unified_storage'] = unified_stats
@@ -730,10 +886,14 @@ class LeadGenerationOrchestrator:
                         # Get the Instagram data
                         leads_data = instagram_results['data']
                         
-                        # Transform to unified schema and store
-                        unified_stats = self.mongodb_manager.insert_and_transform_to_unified(
-                            leads_data, 'instagram', icp_identifier
-                        )
+                        # Use unified leads from scraper if provided; otherwise transform ALL types here
+                        unified_leads = instagram_results.get('unified_leads') or []
+                        if not unified_leads:
+                            unified_leads = [instagram_scraper._transform_instagram_to_unified(entry, icp_identifier) for entry in leads_data]
+                            unified_leads = [u for u in unified_leads if u]
+                        unified_stats = self.mongodb_manager.insert_batch_unified_leads(unified_leads) if unified_leads else {
+                            'success_count': 0,'duplicate_count':0,'failure_count':0,'total_processed':0
+                        }
                         
                         # Update results with unified storage stats
                         instagram_results['unified_storage'] = unified_stats
@@ -806,13 +966,15 @@ class LeadGenerationOrchestrator:
                 # Transform and store LinkedIn results in unified collection
                 if linkedin_results.get('scraped_data'):
                     try:
-                        # Get the LinkedIn data
-                        leads_data = linkedin_results['scraped_data']
-                        
-                        # Transform to unified schema and store
-                        unified_stats = self.mongodb_manager.insert_and_transform_to_unified(
-                            leads_data, 'linkedin', icp_identifier
-                        )
+                        # Use unified leads from scraper if provided; otherwise transform here
+                        unified_leads = linkedin_results.get('unified_leads') or []
+                        if not unified_leads:
+                            leads_data = linkedin_results['scraped_data']
+                            unified_leads = [linkedin_scraper._transform_linkedin_to_unified(item, icp_identifier) for item in leads_data]
+                            unified_leads = [u for u in unified_leads if u]
+                        unified_stats = self.mongodb_manager.insert_batch_unified_leads(unified_leads) if unified_leads else {
+                            'success_count': 0,'duplicate_count':0,'failure_count':0,'total_processed':0
+                        }
                         
                         # Update results with unified storage stats
                         linkedin_results['unified_storage'] = unified_stats
@@ -838,11 +1000,7 @@ class LeadGenerationOrchestrator:
         
         # Run YouTube scraper
         if 'youtube' in selected_scrapers and classified_urls.get('youtube'):
-            logger.info("🎥 Aborting YouTube scraper...")
-            logger.info("❌ YouTube scraper not implemented")
-            results['youtube'] = {'error': 'YouTube scraper not implemented'}
-
-            """
+            logger.info("🎥 Running YouTube scraper...")
             try:
                 youtube_scraper = YouTubeScraperInterface(
                     headless=True,
@@ -860,7 +1018,6 @@ class LeadGenerationOrchestrator:
             except Exception as e:
                 logger.error(f"❌ YouTube scraper failed: {e}")
                 results['youtube'] = {'error': str(e)}
-            """
 
         return results
     
@@ -882,6 +1039,7 @@ class LeadGenerationOrchestrator:
         
         # Generate summary for each scraper
         for scraper, result in results.items():
+            """
             if scraper == 'lead_filtering':
                 # Handle lead filtering results separately
                 if result.get('error'):
@@ -897,7 +1055,8 @@ class LeadGenerationOrchestrator:
                         "email_based_leads": filtering_stats.get('email_based', 0),
                         "phone_based_leads": filtering_stats.get('phone_based', 0)
                     }
-            elif scraper == 'contact_enhancement':
+            """
+            if scraper == 'contact_enhancement':
                 # Handle contact enhancement results separately
                 if result.get('error'):
                     report_data["results_summary"][scraper] = {"status": "failed", "error": result['error']}
@@ -1049,6 +1208,7 @@ class LeadGenerationOrchestrator:
             logger.info("🚀 Step 5: Running scrapers...")
             results = await self.run_selected_scrapers(classified_urls, selected_scrapers, icp_identifier)
             
+            """
             # Step 6: Filter and process leads using MongoDBLeadProcessor
             logger.info("🧹 Step 6: Filtering and processing leads...")
             try:
@@ -1084,7 +1244,7 @@ class LeadGenerationOrchestrator:
             except Exception as e:
                 logger.error(f"❌ Error in lead filtering: {e}")
                 results['lead_filtering'] = {'error': str(e)}
-
+"""
             # Step 7: Enhance leads with contact information using contact scraper
             logger.info("📞 Step 7: Enhancing leads with contact information...")
             try:
@@ -1135,6 +1295,7 @@ class LeadGenerationOrchestrator:
             successful_scrapers = len([r for r in results.values() if not r.get('error') and r != results.get('lead_filtering')])
             print(f"✅ Successful scrapers: {successful_scrapers}/{len(selected_scrapers)}")
             
+            """
             # Show lead filtering results if available
             if 'lead_filtering' in results and not results['lead_filtering'].get('error'):
                 filtering_stats = results['lead_filtering']['filtering_stats']
@@ -1142,7 +1303,7 @@ class LeadGenerationOrchestrator:
                 print(f"✅ Leads processed: {filtering_stats['inserted']} leads extracted and stored")
                 print(f"📧 Email-based leads: {filtering_stats.get('email_based', 0)}")
                 print(f"📞 Phone-based leads: {filtering_stats.get('phone_based', 0)}")
-            
+            """
             # Show contact enhancement results if available
             if 'contact_enhancement' in results and not results['contact_enhancement'].get('error'):
                 contact_stats = results['contact_enhancement']

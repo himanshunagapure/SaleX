@@ -21,6 +21,7 @@ import time
 import re
 import sys
 import os
+from datetime import datetime
 from typing import List, Dict, Any, Optional
 import random
 from concurrent.futures import ThreadPoolExecutor
@@ -31,7 +32,7 @@ from enum import Enum
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from linkedin_scraper.linkedin_data_extractor import LinkedInDataExtractor
-from database.mongodb_manager import get_mongodb_manager
+# Orchestrator handles MongoDB persistence; scraper avoids direct DB usage
 
 
 class ScrapingStatus(Enum):
@@ -207,14 +208,7 @@ class OptimizedLinkedInScraper:
         self.rate_limiter = RateLimiter(requests_per_minute)
         self.semaphore = asyncio.Semaphore(max_workers)
         
-        # Initialize MongoDB manager if needed
-        if self.use_mongodb:
-            try:
-                self.mongodb_manager = get_mongodb_manager()
-                print("✅ MongoDB connection initialized")
-            except Exception as e:
-                print(f"⚠️ Failed to initialize MongoDB: {e}")
-                self.use_mongodb = False
+        # DB operations are centralized in the orchestrator
 
 
     async def scrape_async(self, urls: List[str], output_filename: str = "linkedin_scraped_data.json") -> Dict[str, Any]:
@@ -279,6 +273,18 @@ class OptimizedLinkedInScraper:
             # Phase 3: Filter and save results
             print(f"\n💾 PHASE 3: FILTERING AND SAVING RESULTS")
             self._finalize_results(results)
+            # Always attach unified leads for orchestrator-level persistence
+            try:
+                if results.get("scraped_data"):
+                    unified_leads = [
+                        self._transform_linkedin_to_unified(item, self.icp_identifier)
+                        for item in results["scraped_data"]
+                    ]
+                    results['unified_leads'] = [u for u in unified_leads if u]
+                else:
+                    results['unified_leads'] = []
+            except Exception:
+                results['unified_leads'] = []
             self._save_results_to_file(results, output_filename)
             self._print_summary(results)
             
@@ -290,6 +296,78 @@ class OptimizedLinkedInScraper:
         
         finally:
             await self.context_pool.cleanup()
+
+    def _transform_linkedin_to_unified(self, linkedin_data: Dict[str, Any], icp_identifier: str = 'default') -> Optional[Dict[str, Any]]:
+        """Transform LinkedIn data to unified schema (local to scraper)"""
+        try:
+            # Map URL type to content type
+            url_type = linkedin_data.get('url_type', '')
+            content_type = {
+                'profile': 'profile',
+                'company': 'profile',
+                'post': 'article',
+                'newsletter': 'article'
+            }.get(url_type, 'profile')
+
+            full_name = linkedin_data.get('author_name') or linkedin_data.get('full_name')
+            if not full_name or str(full_name).strip().lower() in { 'sign up','signup','log in','login','register','join now','get started','create account','sign in','signin','continue','next','submit','loading','please wait','error','page not found','404','access denied','unauthorized','linkedin','connect','follow','view profile' }:
+                return None
+
+            unified = {
+                "url": linkedin_data.get('url', ""),
+                "platform": "linkedin",
+                "content_type": content_type,
+                "source": "linkedin-scraper",
+                "icp_identifier": icp_identifier,
+                "profile": {
+                    "username": linkedin_data.get('username', ""),
+                    "full_name": full_name or "",
+                    "bio": linkedin_data.get('about') or linkedin_data.get('about_us', ""),
+                    "location": linkedin_data.get('location', ""),
+                    "job_title": linkedin_data.get('job_title', ""),
+                    "employee_count": str(linkedin_data.get('employee_count')) if linkedin_data.get('employee_count') else ""
+                },
+                "contact": {
+                    "emails": [],
+                    "phone_numbers": [],
+                    "address": linkedin_data.get('address', ""),
+                    "websites": [linkedin_data.get('website')] if linkedin_data.get('website') else [],
+                    "social_media_handles": {
+                        "instagram": "",
+                        "twitter": "",
+                        "facebook": "",
+                        "linkedin": linkedin_data.get('username') or linkedin_data.get('author_url', ""),
+                        "youtube": "",
+                        "tiktok": "",
+                        "other": []
+                    },
+                    "bio_links": []
+                },
+                "content": {
+                    "caption": linkedin_data.get('headline', ""),
+                    "upload_date": linkedin_data.get('date_published', ""),
+                    "channel_name": "",
+                    "author_name": linkedin_data.get('author_name') or linkedin_data.get('full_name', "")
+                },
+                "metadata": {
+                    "scraped_at": datetime.utcnow().isoformat(),
+                    "data_quality_score": "0.45"
+                },
+                "industry": None,
+                "revenue": None,
+                "lead_category": None,
+                "lead_sub_category": None,
+                "company_name": linkedin_data.get('full_name', ""),
+                "company_type": None,
+                "decision_makers": None,
+                "bdr": "AKG",
+                "product_interests": None,
+                "timeline": None,
+                "interest_level": None
+            }
+            return unified
+        except Exception:
+            return None
     
     def _create_batches(self, tasks: List[ScrapingTask], batch_size: int):
         """Create batches of tasks for processing"""
@@ -792,31 +870,17 @@ class OptimizedLinkedInScraper:
         return False
     
     def _save_results_to_file(self, results: Dict[str, Any], filename: str) -> None:
-        """Save results to JSON file and MongoDB"""
+        """Save results to JSON file and attach unified leads for orchestrator"""
         
-        # Save to MongoDB if enabled
-        mongodb_stats = None
-        unified_stats = None
-        if self.use_mongodb and results.get("scraped_data"):
-            try:
-                # Save to original LinkedIn collection
-                mongodb_stats = self.mongodb_manager.insert_batch_leads(results["scraped_data"], 'linkedin')
-                print(f"\n💾 Results saved to MongoDB (linkedin_leads):")
-                print(f"   - Successfully inserted: {mongodb_stats['success_count']}")
-                print(f"   - Duplicates skipped: {mongodb_stats['duplicate_count']}")
-                print(f"   - Failed insertions: {mongodb_stats['failure_count']}")
-                
-                # Also save to unified collection
-                unified_stats = self.mongodb_manager.insert_and_transform_to_unified(results["scraped_data"], 'linkedin', self.icp_identifier)
-                print(f"\n💾 Results also saved to unified_leads collection:")
-                print(f"   - Successfully transformed & inserted: {unified_stats['success_count']}")
-                print(f"   - Duplicates skipped: {unified_stats['duplicate_count']}")
-                print(f"   - Failed transformations: {unified_stats['failure_count']}")
-                
-            except Exception as e:
-                print(f"❌ Error saving to MongoDB: {e}")
-        elif self.use_mongodb and not results.get("scraped_data"):
-            print("\n⚠️ No clean data to save to MongoDB (all data was sign-up pages)")
+        # Build unified leads for orchestrator-level persistence
+        if results.get("scraped_data"):
+            unified_leads = [
+                self._transform_linkedin_to_unified(item, self.icp_identifier)
+                for item in results["scraped_data"]
+            ]
+            unified_leads = [u for u in unified_leads if u]
+            if unified_leads:
+                results['unified_leads'] = unified_leads
         
         # Save to file as backup
         try:
@@ -828,12 +892,6 @@ class OptimizedLinkedInScraper:
         
         except Exception as e:
             print(f"❌ Error saving results to {filename}: {e}")
-        
-        # Add MongoDB stats to results
-        if mongodb_stats:
-            results['mongodb_stats'] = mongodb_stats
-        if unified_stats:
-            results['unified_stats'] = unified_stats
     
     def _print_summary(self, results: Dict[str, Any]) -> None:
         """Print scraping summary"""
@@ -1284,48 +1342,7 @@ class LinkedInScraperMain:
         
         return False
     
-    def _save_results_to_file(self, results: Dict[str, Any], filename: str) -> None:
-        """Save results to JSON file and MongoDB"""
-        
-        # Save to MongoDB if enabled
-        mongodb_stats = None
-        unified_stats = None
-        if self.use_mongodb and results.get("scraped_data"):
-            try:
-                # Save to original LinkedIn collection
-                mongodb_stats = self.mongodb_manager.insert_batch_leads(results["scraped_data"], 'linkedin')
-                print(f"\n💾 Results saved to MongoDB (linkedin_leads):")
-                print(f"   - Successfully inserted: {mongodb_stats['success_count']}")
-                print(f"   - Duplicates skipped: {mongodb_stats['duplicate_count']}")
-                print(f"   - Failed insertions: {mongodb_stats['failure_count']}")
-                
-                # Also save to unified collection
-                unified_stats = self.mongodb_manager.insert_and_transform_to_unified(results["scraped_data"], 'linkedin', self.icp_identifier)
-                print(f"\n💾 Results also saved to unified_leads collection:")
-                print(f"   - Successfully transformed & inserted: {unified_stats['success_count']}")
-                print(f"   - Duplicates skipped: {unified_stats['duplicate_count']}")
-                print(f"   - Failed transformations: {unified_stats['failure_count']}")
-                
-            except Exception as e:
-                print(f"❌ Error saving to MongoDB: {e}")
-        elif self.use_mongodb and not clean_scraped_data:
-            print("\n⚠️ No clean data to save to MongoDB (all data was sign-up pages)")
-        # Save to file as backup
-        try:
-            with open(filename, 'w', encoding='utf-8') as f:
-                json.dump(results, f, indent=2, ensure_ascii=False, default=str)
-            
-            print(f"\n💾 Results also saved to file: {filename}")
-            print(f"   File size: {len(json.dumps(results, indent=2, ensure_ascii=False, default=str)):,} characters")
-        
-        except Exception as e:
-            print(f"❌ Error saving results to {filename}: {e}")
-        
-        # Add MongoDB stats to results
-        if mongodb_stats:
-            results['mongodb_stats'] = mongodb_stats
-        if unified_stats:
-            results['unified_stats'] = unified_stats
+    # Removed legacy _save_results_to_file method with MongoDB writes to avoid duplication.
     
     def _print_summary(self, results: Dict[str, Any]) -> None:
         """Print scraping summary"""

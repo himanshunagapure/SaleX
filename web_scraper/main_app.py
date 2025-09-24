@@ -808,6 +808,72 @@ class WebScraperOrchestrator:
         scores = list(confidence_scores.values())
         return sum(scores) / len(scores) if scores else 0.5
 
+    def _transform_web_final_to_unified(self, lead: Dict[str, Any], icp_identifier: str = 'default') -> Optional[Dict[str, Any]]:
+        """Transform final web lead entry to unified schema (local to scraper)."""
+        try:
+            url = lead.get('source_url') or lead.get('website') or ''
+            if not url:
+                return None
+            emails = []
+            if lead.get('email'):
+                if isinstance(lead['email'], list):
+                    emails = [e for e in lead['email'] if e]
+                else:
+                    emails = [lead['email']]
+            phones = []
+            if lead.get('phone'):
+                if isinstance(lead['phone'], list):
+                    phones = [p for p in lead['phone'] if p]
+                else:
+                    phones = [lead['phone']]
+            unified = {
+                "url": url,
+                "platform": "web",
+                "content_type": "profile",
+                "source": "web-scraper",
+                "icp_identifier": icp_identifier,
+                "profile": {
+                    "username": "",
+                    "full_name": lead.get('business_name') or lead.get('contact_person') or "",
+                    "bio": "",
+                    "location": lead.get('address') or "",
+                    "job_title": "",
+                    "employee_count": ""
+                },
+                "contact": {
+                    "emails": emails,
+                    "phone_numbers": phones,
+                    "address": lead.get('address') or "",
+                    "websites": [url] if url else [],
+                    "social_media_handles": lead.get('social_media') or {},
+                    "bio_links": []
+                },
+                "content": {
+                    "caption": "",
+                    "upload_date": "",
+                    "channel_name": "",
+                    "author_name": ""
+                },
+                "metadata": {
+                    "scraped_at": datetime.utcnow().isoformat(),
+                    "data_quality_score": f"{self._calculate_overall_confidence(lead.get('confidence_scores', {})):.2f}"
+                },
+                "industry": lead.get('industry'),
+                "revenue": None,
+                "lead_category": None,
+                "lead_sub_category": None,
+                "company_name": lead.get('business_name') or "",
+                "company_type": None,
+                "decision_makers": lead.get('contact_person') or "",
+                "bdr": "AKG",
+                "product_interests": None,
+                "timeline": None,
+                "interest_level": None
+            }
+            return unified
+        except Exception:
+            return None
+
     def run_complete_pipeline(self, 
                             urls: List[str] = None,
                             url_file: str = None,
@@ -868,15 +934,15 @@ class WebScraperOrchestrator:
         
         # Export results if requested
         exported_file = None
-        if export_path and all_successful_leads:
-            try:
-                exported_file = self.export_manager.export_filtered_leads(
-                    output_path=export_path,
-                    export_format=export_format
-                )
-                logger.info(f"Results exported to {exported_file}")
-            except Exception as e:
-                logger.error(f"Export failed: {e}")
+        # if export_path and all_successful_leads:
+        #     try:
+        #         exported_file = self.export_manager.export_filtered_leads(
+        #             output_path=export_path,
+        #             export_format=export_format
+        #         )
+        #         logger.info(f"Results exported to {exported_file}")
+        #     except Exception as e:
+        #         logger.error(f"Export failed: {e}")
         
         # Generate final leads if requested
         final_leads_file, final_leads = None, []
@@ -888,25 +954,34 @@ class WebScraperOrchestrator:
                     logger.info(f"Final leads generated: {final_leads_file} with {len(final_leads)} leads")
             except Exception as e:
                 logger.error(f"Final leads generation failed: {e}")
-
+        
+        # Build unified leads locally from final leads and save
+        unified_leads = []
+        for lead in final_leads:
+            lead_dict = lead if isinstance(lead, dict) else lead.dict()
+            u = self._transform_web_final_to_unified(lead_dict, icp_identifier)
+            if u:
+                unified_leads.append(u)
+                
         # Save to MongoDB if enabled
         if self.use_mongodb:
             try:
-                leads_data = []
+                # Save original web leads (optional)
+                web_leads_data = []
                 for lead in final_leads:
                     lead_dict = lead if isinstance(lead, dict) else lead.dict()
-            
-                    # Add domain information
                     if lead_dict.get('source_url'):
                         lead_dict['domain'] = urlparse(lead_dict['source_url']).netloc
-                    
-                    # Add ICP identifier
                     lead_dict['icp_identifier'] = icp_identifier
-                    
-                    leads_data.append(lead_dict)
-                
-                mongodb_stats = self.mongodb_manager.insert_batch_leads(leads_data, 'web')
-                logger.info(f"✅ Batch saved to MongoDB - Success: {mongodb_stats['success_count']}, Duplicates: {mongodb_stats['duplicate_count']}, Failures: {mongodb_stats['failure_count']}")
+                    web_leads_data.append(lead_dict)
+                if web_leads_data:
+                    mongodb_stats = self.mongodb_manager.insert_batch_leads(web_leads_data, 'web')
+                    logger.info(f"✅ Batch saved to MongoDB (web_leads) - Success: {mongodb_stats['success_count']}, Duplicates: {mongodb_stats['duplicate_count']}, Failures: {mongodb_stats['failure_count']}")
+
+
+                # if unified_leads:
+                #     unified_stats = self.mongodb_manager.insert_batch_unified_leads(unified_leads)
+                #     logger.info(f"✅ Unified leads saved - Success: {unified_stats['success_count']}, Duplicates: {unified_stats['duplicate_count']}, Failures: {unified_stats['failure_count']}")
             except Exception as e:
                 logger.error(f"❌ Error saving to MongoDB: {e}")
 
@@ -929,7 +1004,8 @@ class WebScraperOrchestrator:
             "duplicate_info": self.duplicate_leads,
             "exported_file": exported_file,
             "final_leads_file": final_leads_file,
-            "storage_stats": self.storage.get_storage_stats()
+            "storage_stats": self.storage.get_storage_stats(),
+            "unified_leads": unified_leads
         }
         
         logger.info(f"Pipeline completed: {len(all_successful_leads)}/{len(urls)} successful in {duration:.2f}s")

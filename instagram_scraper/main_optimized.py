@@ -38,18 +38,18 @@ import gc
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from instagram_scraper.src.advanced_graphql_extractor import AdvancedGraphQLExtractor
-from database.mongodb_manager import get_mongodb_manager
+# Removed direct MongoDB dependency from scraper. Orchestrator will handle DB.
 
 
 @dataclass
 class ScrapingConfig:
     """Configuration for optimized scraping with enhanced network resilience"""
     max_workers: int = 3  # Reduced for better stability
-    batch_size: int = 3   # Reduced for better stability
+    batch_size: int = 5   # Reduced for better stability
     context_pool_size: int = 3  # Reduced for better stability
     context_reuse_limit: int = 15  # Reduced for better stability
     rate_limit_delay: float = 2.0  # Increased for better rate limiting
-    max_retries: int = 3  # Increased for better resilience
+    max_retries: int = 2  # Increased for better resilience
     timeout_seconds: int = 45  # Increased for better stability
     cleanup_interval: int = 10
     network_retry_delay: float = 5.0  # Base delay for network retries
@@ -175,14 +175,7 @@ class OptimizedInstagramScraper:
         self.worker_semaphore = asyncio.Semaphore(self.config.max_workers)
         self.rate_limiter = asyncio.Semaphore(3)  # Global rate limiter
         
-        # Initialize MongoDB manager if needed
-        if self.use_mongodb:
-            try:
-                self.mongodb_manager = get_mongodb_manager()
-                print("✅ MongoDB connection initialized")
-            except Exception as e:
-                print(f"⚠️ Failed to initialize MongoDB: {e}")
-                self.use_mongodb = False
+        # Scraper no longer initializes MongoDB. DB operations are orchestrated centrally.
     
     async def scrape(self, urls: List[str]) -> Dict[str, Any]:
         """
@@ -255,55 +248,25 @@ class OptimizedInstagramScraper:
                 if batch_num < (len(urls) + self.config.batch_size - 1) // self.config.batch_size:
                     await asyncio.sleep(self.config.rate_limit_delay)
             
-            # Save to MongoDB if enabled
-            mongodb_stats = None
-            unified_stats = None
-            if self.use_mongodb and all_extracted_data:
-                try:
-                    # Add ICP identifier to all data entries
-                    for entry in all_extracted_data:
-                        entry['icp_identifier'] = self.icp_identifier
-                    
-                    # Save to original Instagram collection
-                    mongodb_stats = self.mongodb_manager.insert_batch_leads(all_extracted_data, 'instagram')
-                    print(f"\n💾 Results saved to MongoDB (instagram_leads):")
-                    print(f"   - Successfully inserted: {mongodb_stats['success_count']}")
-                    print(f"   - Duplicates skipped: {mongodb_stats['duplicate_count']}")
-                    print(f"   - Failed insertions: {mongodb_stats['failure_count']}")
-                    
-                    # Filter only profile type data for unified collection
-                    profile_data_only = [entry for entry in all_extracted_data if entry.get('content_type') == 'profile']
-                    
-                    if profile_data_only:
-                        # Also save to unified collection
-                        unified_stats = self.mongodb_manager.insert_and_transform_to_unified(profile_data_only, 'instagram', self.icp_identifier)
-                        print(f"\n💾 Results also saved to unified_leads collection:")
-                        print(f"   - Successfully transformed & inserted: {unified_stats['success_count']}")
-                        print(f"   - Duplicates skipped: {unified_stats['duplicate_count']}")
-                        print(f"   - Failed transformations (invalid data): {unified_stats['failure_count']}")
-                        print(f"   - Total processed: {unified_stats['total_processed']}")
-                        
-                        # Show validation summary
-                        valid_leads = unified_stats['success_count'] + unified_stats['duplicate_count']
-                        invalid_leads = unified_stats['failure_count']
-                        total_leads = unified_stats['total_processed']
-                        
-                        if total_leads > 0:
-                            validation_rate = (valid_leads / total_leads) * 100
-                            print(f"   - Validation rate: {validation_rate:.1f}% ({valid_leads}/{total_leads} leads passed validation)")
-                except Exception as e:
-                    print(f"❌ Error saving to MongoDB: {e}")
+            # Build unified leads locally for ALL content types. Orchestrator will handle DB persistence.
+            unified_leads = []
+            if all_extracted_data:
+                unified_leads = [
+                    self._transform_instagram_to_unified(entry, self.icp_identifier)
+                    for entry in all_extracted_data
+                ]
+                unified_leads = [u for u in unified_leads if u]
             
             # Save to file if specified (as backup)
             output_file_path = None
-            if self.output_file:
-                try:
-                    with open(self.output_file, 'w', encoding='utf-8') as f:
-                        json.dump(all_extracted_data, f, indent=2, ensure_ascii=False, default=str)
-                    output_file_path = self.output_file
-                    print(f"\n💾 Results also saved to file: {self.output_file}")
-                except Exception as e:
-                    print(f"❌ Error saving to file: {e}")
+            # if self.output_file:
+            #     try:
+            #         with open(self.output_file, 'w', encoding='utf-8') as f:
+            #             json.dump(all_extracted_data, f, indent=2, ensure_ascii=False, default=str)
+            #         output_file_path = self.output_file
+            #         print(f"\n💾 Results also saved to file: {self.output_file}")
+            #     except Exception as e:
+            #         print(f"❌ Error saving to file: {e}")
             
             # Calculate summary statistics
             total_time = time.time() - start_time
@@ -353,8 +316,7 @@ class OptimizedInstagramScraper:
                 'summary': summary,
                 'errors': errors,
                 'output_file': output_file_path,
-                'mongodb_stats': mongodb_stats,
-                'unified_stats': unified_stats
+                'unified_leads': unified_leads
             }
             
         except Exception as e:
@@ -387,6 +349,113 @@ class OptimizedInstagramScraper:
                     print(f"✅ Context pool cleanup completed")
                 except Exception as e:
                     print(f"⚠️ Warning during context pool cleanup: {e}")
+    
+    def _transform_instagram_to_unified(self, instagram_data: Dict[str, Any], icp_identifier: str = 'default') -> Optional[Dict[str, Any]]:
+        """Transform Instagram data (profile/article/video) to unified schema (local to scraper)"""
+        try:
+            content_type = (instagram_data.get('content_type') or '').lower()
+
+            if content_type == 'unknown':
+                return None
+
+            base = {
+                "url": instagram_data.get('url', ""),
+                "platform": "instagram",
+                "content_type": content_type or "unknown",
+                "source": "instagram-scraper",
+                "icp_identifier": icp_identifier,
+                "metadata": {
+                    "scraped_at": instagram_data.get('scraped_at') or time.time(),
+                    "data_quality_score": ""
+                },
+                # Common optional fields kept for unified schema
+                "industry": None,
+                "revenue": None,
+                "lead_category": None,
+                "lead_sub_category": None,
+                "company_name": instagram_data.get('full_name', ""),
+                "company_type": None,
+                "decision_makers": None,
+                "bdr": "AKG",
+                "product_interests": None,
+                "timeline": None,
+                "interest_level": None
+            }
+
+            if content_type == 'profile':
+                base.update({
+                    "profile": {
+                        "username": instagram_data.get('username', ""),
+                        "full_name": instagram_data.get('full_name', ""),
+                        "bio": instagram_data.get('biography', ""),
+                        "location": "",
+                        "job_title": instagram_data.get('business_category_name', ""),
+                        "employee_count": ""
+                    },
+                    "contact": {
+                        "emails": [instagram_data.get('business_email')] if instagram_data.get('business_email') else [],
+                        "phone_numbers": [instagram_data.get('business_phone_number')] if instagram_data.get('business_phone_number') else [],
+                        "address": "",
+                        "websites": [],
+                        "social_media_handles": {
+                            "instagram": instagram_data.get('username', ""),
+                            "twitter": "",
+                            "facebook": "",
+                            "linkedin": "",
+                            "youtube": "",
+                            "tiktok": "",
+                            "other": []
+                        },
+                        "bio_links": instagram_data.get('bio_links', [])
+                    },
+                    "content": {
+                        "caption": "",
+                        "upload_date": "",
+                        "channel_name": "",
+                        "author_name": ""
+                    }
+                })
+                return base
+
+            if content_type in ('article', 'video'):
+                base.update({
+                    "profile": {
+                        "username": instagram_data.get('username', ""),
+                        "full_name": instagram_data.get('full_name', ""),
+                        "bio": "",
+                        "location": "",
+                        "job_title": "",
+                        "employee_count": ""
+                    },
+                    "contact": {
+                        "emails": [],
+                        "phone_numbers": [],
+                        "address": "",
+                        "websites": [],
+                        "social_media_handles": {
+                            "instagram": instagram_data.get('username', ""),
+                            "twitter": "",
+                            "facebook": "",
+                            "linkedin": "",
+                            "youtube": "",
+                            "tiktok": "",
+                            "other": []
+                        },
+                        "bio_links": ""
+                    },
+                    "content": {
+                        "caption": instagram_data.get('caption', ""),
+                        "upload_date": instagram_data.get('post_date', ""),
+                        "channel_name": "",
+                        "author_name": instagram_data.get('username', "")
+                    }
+                })
+                return base
+
+            # Unknown type - still return minimal entry so caller can decide
+            return None
+        except Exception:
+            return None
     
     def _create_batches(self, urls: List[str], batch_size: int) -> List[List[str]]:
         """Create batches of URLs for processing"""

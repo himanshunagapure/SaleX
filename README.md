@@ -1,6 +1,6 @@
 # AI Lead Generation Application
 
-A comprehensive lead generation system that uses AI-powered search query generation and multi-platform scraping (Instagram, LinkedIn, YouTube, and general websites) to identify potential customers based on Ideal Customer Profiles (ICP). The system features a unified data model for consistent lead storage and processing across all platforms.
+A comprehensive lead generation system that integrates multiple scrapers to collect, process, and enhance leads from various sources with unified storage and processing. Scraping (Instagram, LinkedIn, YouTube, and general websites) to identify potential customers based on Ideal Customer Profiles (ICP). The system features a unified data model for consistent lead storage and processing across all platforms.
 
 ## Table of Contents
 
@@ -305,31 +305,31 @@ The application uses a centralized MongoDB manager that provides:
 
 ## API Documentation
 
-The Lead Generation API provides a RESTful interface for managing the lead generation pipeline. All endpoints return JSON responses and require proper authentication.
+### Base URL
+```
+http://localhost:5000
+```
 
 ### Authentication
-All API endpoints require an API key. Include it in the `X-API-Key` header.
-
-### Base URL
-`https://your-domain.com/api`
+Currently, the API does not require authentication for development. In production, consider adding API key authentication.
 
 ### Endpoints
 
-#### 1. System Status
+#### 1. Health Check
 - **GET** `/health`
   - Check if the API is running
   - Response:
     ```json
     {
       "status": "healthy",
-      "timestamp": "2024-01-15T10:00:00Z",
+      "timestamp": "2023-01-01T12:00:00.000000",
       "service": "Lead Generation Backend"
     }
     ```
 
-#### 2. Available Scrapers
+#### 2. Get Available Scrapers
 - **GET** `/api/scrapers`
-  - List all available scrapers and their descriptions
+  - List all available scrapers and their status
   - Response:
     ```json
     {
@@ -337,16 +337,126 @@ All API endpoints require an API key. Include it in the `X-API-Key` header.
       "data": {
         "available_scrapers": ["web_scraper", "instagram", "linkedin", "youtube"],
         "scrapers_info": {
-          "web_scraper": "General web scraping for websites",
-          "instagram": "Instagram profiles and posts",
-          "linkedin": "LinkedIn profiles and companies",
-          "youtube": "YouTube channels and videos"
+          "web_scraper": {"description": "General web page scraper", "requires_urls": true},
+          "instagram": {"description": "Instagram profile scraper", "requires_urls": false},
+          "linkedin": {"description": "LinkedIn profile scraper", "requires_urls": false},
+          "youtube": {"description": "YouTube channel scraper", "requires_urls": false}
         }
       }
     }
     ```
 
-#### 3. ICP Management
+#### 3. Lead Filtering
+- **POST** `/api/lead-filtering/run`
+  - Run lead filtering process on collected data
+  - Request Body (optional):
+    ```json
+    {
+      "query_filter": {"platform": "web"},
+      "batch_size": 50
+    }
+    ```
+  - Response:
+    ```json
+    {
+      "success": true,
+      "message": "Lead filtering completed successfully",
+      "stats": {
+        "total_processed": 150,
+        "leads_added": 42,
+        "leads_updated": 15,
+        "duplicates_skipped": 93,
+        "execution_time": "2.34s"
+      }
+    }
+    ```
+
+#### 4. Contact Enhancement
+- **POST** `/api/contact-enhancement/run`
+  - Enhance contact information for existing leads
+  - Request Body (optional):
+    ```json
+    {
+      "limit": 100,
+      "batch_size": 20
+    }
+    ```
+  - Response:
+    ```json
+    {
+      "success": true,
+      "message": "Contact enhancement completed",
+      "stats": {
+        "leads_enhanced": 78,
+        "emails_added": 45,
+        "phones_added": 33,
+        "execution_time": "1.25m"
+      }
+    }
+    ```
+
+#### 5. Get Leads by ICP
+- **GET** `/api/leads/icp/<icp_identifier>`
+  - Retrieve leads filtered by ICP identifier
+  - Query Parameters:
+    - `limit`: Number of results to return (default: 50)
+    - `skip`: Number of results to skip (for pagination)
+    - `sort_field`: Field to sort by (default: "_id")
+    - `sort_order`: Sort order (1 for ascending, -1 for descending, default: -1)
+  - Response:
+    ```json
+    {
+      "success": true,
+      "data": [
+        {
+          "_id": "5f8d...",
+          "url": "https://example.com/contact",
+          "platform": "web",
+          "profile": {
+            "full_name": "John Doe",
+            "job_title": "HR Manager"
+          },
+          "contact": {
+            "emails": ["john@example.com"],
+            "phones": ["+1234567890"]
+          },
+          "data_quality_score": 0.85
+        }
+      ],
+      "total_count": 123,
+      "page": 1,
+      "page_size": 50
+    }
+    ```
+
+#### 6. Get ICP Statistics
+- **GET** `/api/icp/stats/<icp_identifier>`
+  - Get statistics for a specific ICP
+  - Response:
+    ```json
+    {
+      "success": true,
+      "data": {
+        "icp_identifier": "premium-bus-travel_20241201",
+        "total_leads": 150,
+        "leads_by_platform": {
+          "web": 75,
+          "instagram": 35,
+          "linkedin": 25,
+          "youtube": 15
+        },
+        "data_quality": {
+          "average_score": 0.82,
+          "high_quality": 120,
+          "medium_quality": 25,
+          "low_quality": 5
+        },
+        "last_updated": "2023-01-01T12:00:00.000Z"
+      }
+    }
+    ```
+
+#### 7. Get ICP Template
 - **GET** `/api/icp/template`
   - Get ICP template with all required fields
   - Response:

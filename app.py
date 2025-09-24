@@ -30,6 +30,13 @@ from web_url_scraper.database_service import (
     get_urls_by_type_and_icp
 )
 
+# Scraper registry
+from scraper_registry import (
+    get_scrapers_info,
+    is_valid_scraper,
+    get_url_type_map,
+)
+
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -75,12 +82,7 @@ def get_available_scrapers():
             "success": True,
             "data": {
                 "available_scrapers": list(orch.available_scrapers.keys()),
-                "scrapers_info": {
-                    "web_scraper": "General web scraping for websites",
-                    "instagram": "Instagram profiles and posts",
-                    "linkedin": "LinkedIn profiles and companies", 
-                    "youtube": "YouTube channels and videos"
-                }
+                "scrapers_info": get_scrapers_info()
             }
         })
     except Exception as e:
@@ -134,7 +136,7 @@ def run_lead_generation():
         
         # Extract and validate required fields
         icp_data = data.get('icp_data')
-        selected_scrapers = data.get('selected_scrapers', ['web_scraper', 'instagram', 'linkedin'])
+        selected_scrapers = data.get('selected_scrapers', ['web_scraper'])
         
         if not icp_data:
             return jsonify({
@@ -179,7 +181,7 @@ def run_lead_generation():
             "error": f"Pipeline failed: {str(e)}"
         }), 500
 
-async def run_pipeline_async(orch, icp_data, selected_scrapers, icp_identifier):
+async def run_pipeline_async(orch, icp_data, selected_scrapers, icp_identifier, platform_override: str = None):
     """
     Run the complete lead generation pipeline asynchronously
     """
@@ -213,7 +215,11 @@ async def run_pipeline_async(orch, icp_data, selected_scrapers, icp_identifier):
         #     web_crawler_results = {'success': False, 'error': str(e)}
         # Step 2: Generate search queries with Gemini AI
         logger.info("🤖 Step 2: Generating search queries...")
-        queries = await orch.generate_search_queries(icp_data, selected_scrapers)
+        if platform_override and len(selected_scrapers) == 1:
+            # Generate platform-specific queries only
+            queries = await orch.generate_platform_queries(icp_data, platform_override)
+        else:
+            queries = await orch.generate_search_queries(icp_data, selected_scrapers)
         
         if not queries:
             raise Exception("No search queries were generated")
@@ -309,6 +315,7 @@ async def run_pipeline_async(orch, icp_data, selected_scrapers, icp_identifier):
                 "start_time": pipeline_start.isoformat(),
                 "end_time": pipeline_end.isoformat(),
                 "selected_scrapers": selected_scrapers,
+                "icp_identifier": icp_identifier,
                 "total_queries_generated": len(queries),
                 "total_urls_collected": total_urls
             },
@@ -425,6 +432,13 @@ async def run_pipeline_async(orch, icp_data, selected_scrapers, icp_identifier):
         logger.error(f"❌ Pipeline failed: {e}")
         raise
 
+async def run_single_scraper_pipeline_async(orch, icp_data, scraper_name: str):
+    """
+    Run the pipeline for a single scraper only.
+    """
+    icp_identifier = orch.generate_icp_identifier(icp_data)
+    return await run_pipeline_async(orch, icp_data, [scraper_name], icp_identifier, platform_override=scraper_name)
+
 async def run_direct_pipeline_async(orch, scraper_selections, icp_identifier='default'):
     """
     Run the direct lead generation pipeline using URLs from scraped_urls collection
@@ -447,12 +461,7 @@ async def run_direct_pipeline_async(orch, scraper_selections, icp_identifier='de
         used_urls = []  # Track URLs that will be used for processing
         
         # Map scraper names to URL types
-        scraper_to_url_type = {
-            'web_scraper': 'general',
-            'instagram': 'instagram',
-            'linkedin': 'linkedin',
-            'youtube': 'youtube'
-        }
+        scraper_to_url_type = get_url_type_map()
         
         for scraper, count in scraper_selections.items():
             if count > 0:
@@ -492,6 +501,7 @@ async def run_direct_pipeline_async(orch, scraper_selections, icp_identifier='de
             icp_identifier = orch.generate_icp_identifier(orch.get_hardcoded_icp())
         scraper_results = await orch.run_selected_scrapers(classified_urls, selected_scrapers, icp_identifier)
         
+        """
         # Step 5: Filter and process leads using MongoDBLeadProcessor
         logger.info("🧹 Step 5: Filtering and processing leads...")
         lead_filtering_results = {}
@@ -520,7 +530,7 @@ async def run_direct_pipeline_async(orch, scraper_selections, icp_identifier='de
         
         # Add filtering results to scraper results
         scraper_results['lead_filtering'] = lead_filtering_results
-
+        """
         # Step 6: Enhance leads with contact information using contact scraper
         logger.info("📞 Step 6: Enhancing leads with contact information...")
         contact_enhancement_results = {}
@@ -599,6 +609,7 @@ async def run_direct_pipeline_async(orch, scraper_selections, icp_identifier='de
             #             "status": "failed",
             #             "error": result.get('error', 'Unknown error')
             #         }
+            """
             if scraper == 'lead_filtering':
                 # Handle lead filtering results separately
                 if result.get('error'):
@@ -618,7 +629,8 @@ async def run_direct_pipeline_async(orch, scraper_selections, icp_identifier='de
                         "email_based_leads": filtering_stats.get('email_based', 0),
                         "phone_based_leads": filtering_stats.get('phone_based', 0)
                     }
-            elif scraper == 'contact_enhancement':
+            """
+            if scraper == 'contact_enhancement':
                 # Handle contact enhancement results separately
                 if result.get('error'):
                     response_data["scraper_results_summary"][scraper] = {
@@ -671,7 +683,7 @@ async def run_direct_pipeline_async(orch, scraper_selections, icp_identifier='de
         
         response_data["pipeline_metadata"]["successful_scrapers"] = actual_successful_scrapers
         response_data["pipeline_metadata"]["total_scrapers"] = len(selected_scrapers)
-        response_data["pipeline_metadata"]["lead_filtering_successful"] = not lead_filtering_results.get('error')
+        #response_data["pipeline_metadata"]["lead_filtering_successful"] = not lead_filtering_results.get('error')
         response_data["pipeline_metadata"]["contact_enhancement_successful"] = not contact_enhancement_results.get('error')
         
         logger.info(f"✅ Direct pipeline completed successfully in {execution_time:.2f} seconds")
@@ -730,6 +742,64 @@ def generate_queries_only():
         return jsonify({
             "success": False,
             "error": str(e)
+        }), 500
+
+@app.route('/api/scraper/<scraper_name>/run', methods=['POST'])
+def run_single_scraper(scraper_name):
+    """
+    Run lead generation pipeline for a single scraper.
+    Supported scraper_name values: instagram, linkedin, web_scraper, youtube
+    
+    Expected payload:
+    {
+        "icp_data": {...}
+    }
+    """
+    try:
+        # Validate request
+        if not request.is_json:
+            raise BadRequest("Request must be JSON")
+
+        data = request.get_json()
+        icp_data = data.get('icp_data')
+
+        if not is_valid_scraper(scraper_name):
+            return jsonify({
+                "success": False,
+                "error": f"Invalid scraper: {scraper_name}."
+            }), 400
+
+        if not icp_data:
+            return jsonify({
+                "success": False,
+                "error": "icp_data is required"
+            }), 400
+
+        logger.info(f"Starting single-scraper pipeline for: {scraper_name}")
+
+        # Get orchestrator instance
+        orch = get_orchestrator()
+
+        # Run pipeline asynchronously for one scraper
+        result = run_async(run_single_scraper_pipeline_async(orch, icp_data, scraper_name))
+
+        return jsonify({
+            "success": True,
+            "data": result,
+            "icp_identifier": result.get('pipeline_metadata', {}).get('icp_identifier') or result.get('icp_identifier'),
+            "message": f"{scraper_name} pipeline completed successfully"
+        })
+
+    except BadRequest as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 400
+    except Exception as e:
+        logger.error(f"Error in single-scraper pipeline ({scraper_name}): {e}")
+        return jsonify({
+            "success": False,
+            "error": f"{scraper_name} pipeline failed: {str(e)}"
         }), 500
 
 @app.route('/api/lead-filtering/run', methods=['POST'])
@@ -1018,7 +1088,7 @@ def run_direct_lead_generation():
             }), 400
         
         # Validate scraper selections
-        valid_scrapers = ['web_scraper', 'instagram', 'linkedin', 'youtube']
+        valid_scrapers = list(get_url_type_map().keys())
         for scraper, count in scraper_selections.items():
             if scraper not in valid_scrapers:
                 return jsonify({
@@ -1077,6 +1147,7 @@ def not_found(error):
             "GET /api/urls/available - Get available unprocessed URLs count",
             "GET /api/leads/by-icp/<icp_identifier> - Get leads by ICP identifier",
             "GET /api/leads/icp-stats/<icp_identifier> - Get ICP statistics",
+            "POST /api/scraper/<scraper_name>/run - Run single scraper pipeline (instagram|linkedin|web_scraper|youtube)",
             "GET /api/status - Get system status"
         ]
     }), 404

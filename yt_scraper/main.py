@@ -7,12 +7,13 @@ import argparse
 import sys
 import os
 from typing import List, Optional
+from typing import Dict, Any, Optional
 
 # Add parent directory to path to import database module
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from yt_scraper.yt_data_extractor import AdvancedYouTubeExtractor
-from database.mongodb_manager import get_mongodb_manager
+# Orchestrator will handle MongoDB persistence; scraper avoids direct DB usage
 
 class YouTubeScraperInterface:
     """Simple interface for YouTube data extraction"""
@@ -24,14 +25,7 @@ class YouTubeScraperInterface:
         self.use_mongodb = use_mongodb
         self.extractor = None
         
-        # Initialize MongoDB manager if needed
-        if self.use_mongodb:
-            try:
-                self.mongodb_manager = get_mongodb_manager()
-                print("✅ MongoDB connection initialized")
-            except Exception as e:
-                print(f"⚠️ Failed to initialize MongoDB: {e}")
-                self.use_mongodb = False
+        # No direct DB initialization
     
     async def scrape_single_url(self, url: str, output_file: str = "youtube_data.json") -> bool:
         """
@@ -61,25 +55,10 @@ class YouTubeScraperInterface:
                 print(f"❌ Failed to extract data: {data['error']}")
                 return False
             
-            # Save to MongoDB if enabled
-            if self.use_mongodb:
-                try:
-                    # Save to original YouTube collection
-                    mongodb_stats = self.mongodb_manager.insert_batch_leads([data], 'youtube')
-                    print(f"✅ Successfully scraped and saved to MongoDB (youtube_leads):")
-                    print(f"   - Successfully inserted: {mongodb_stats['success_count']}")
-                    print(f"   - Duplicates skipped: {mongodb_stats['duplicate_count']}")
-                    print(f"   - Failed insertions: {mongodb_stats['failure_count']}")
-                    
-                    # Also save to unified collection
-                    unified_stats = self.mongodb_manager.insert_and_transform_to_unified([data], 'youtube')
-                    print(f"✅ Results also saved to unified_leads collection:")
-                    print(f"   - Successfully transformed & inserted: {unified_stats['success_count']}")
-                    print(f"   - Duplicates skipped: {unified_stats['duplicate_count']}")
-                    print(f"   - Failed transformations: {unified_stats['failure_count']}")
-                    
-                except Exception as e:
-                    print(f"❌ Error saving to MongoDB: {e}")
+            # Prepare unified lead for orchestrator-level persistence
+            unified_lead = self._transform_youtube_to_unified(data)
+            if unified_lead:
+                data['unified_lead'] = unified_lead
             
             # Save clean output to file as backup
             await self.extractor.save_clean_final_output([data], output_file)
@@ -128,23 +107,14 @@ class YouTubeScraperInterface:
             # Save to file as backup
             final_output = await self.extractor.save_clean_final_output(all_data, output_file)
             
-            # Save to MongoDB if enabled
-            if self.use_mongodb and final_output:
-                try:
-                    mongodb_stats = self.mongodb_manager.insert_batch_leads(final_output, 'youtube')
-                    print(f"✅ Successfully saved to MongoDB:")
-                    print(f"   - Successfully inserted: {mongodb_stats['success_count']}")
-                    print(f"   - Duplicates skipped: {mongodb_stats['duplicate_count']}")
-                    print(f"   - Failed insertions: {mongodb_stats['failure_count']}")
-
-                    # Also save to unified collection
-                    unified_stats = self.mongodb_manager.insert_and_transform_to_unified(final_output, 'youtube')
-                    print(f"✅ Results also saved to unified_leads collection:")
-                    print(f"   - Successfully transformed & inserted: {unified_stats['success_count']}")
-                    print(f"   - Duplicates skipped: {unified_stats['duplicate_count']}")
-                    print(f"   - Failed transformations: {unified_stats['failure_count']}")
-                except Exception as e:
-                    print(f"❌ Error saving to MongoDB: {e}")
+            # Prepare unified leads for orchestrator-level persistence
+            if final_output:
+                unified_batch = []
+                for item in final_output:
+                    u = self._transform_youtube_to_unified(item)
+                    if u:
+                        unified_batch.append(u)
+                # Attach as metadata in return path by updating output file content already contains data
             
 
             
@@ -157,6 +127,81 @@ class YouTubeScraperInterface:
         finally:
             if self.extractor:
                 await self.extractor.stop()
+
+    def _transform_youtube_to_unified(self, youtube_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Transform YouTube data to unified schema (local to scraper). Only profile-type saved."""
+        try:
+            content_type = (youtube_data.get('content_type') or '').lower()
+            if content_type != 'profile':
+                return None
+            social_media_data = youtube_data.get('social_media_handles', {}) or {}
+            def get_first_handle(handles_list):
+                if handles_list and isinstance(handles_list, list) and len(handles_list) > 0:
+                    return handles_list[0].get('username', '') if isinstance(handles_list[0], dict) else handles_list[0]
+                return ""
+            def get_bio_links():
+                links = []
+                for platform, handles in social_media_data.items():
+                    if handles and isinstance(handles, list):
+                        for handle in handles:
+                            if isinstance(handle, dict) and 'url' in handle:
+                                links.append(handle['url'])
+                return links
+            unified = {
+                "url": youtube_data.get('url', ""),
+                "platform": "youtube",
+                "content_type": "profile",
+                "source": "youtube-scraper",
+                "icp_identifier": 'default',
+                "profile": {
+                    "username": "",
+                    "full_name": youtube_data.get('channel_name', ""),
+                    "bio": youtube_data.get('description', ""),
+                    "location": "",
+                    "job_title": "",
+                    "employee_count": ""
+                },
+                "contact": {
+                    "emails": [youtube_data.get('email')] if youtube_data.get('email') else [],
+                    "phone_numbers": [],
+                    "address": "",
+                    "websites": [],
+                    "social_media_handles": {
+                        "instagram": get_first_handle(social_media_data.get('instagram')),
+                        "twitter": get_first_handle(social_media_data.get('twitter')),
+                        "facebook": get_first_handle(social_media_data.get('facebook')),
+                        "linkedin": get_first_handle(social_media_data.get('linkedin')),
+                        "youtube": youtube_data.get('channel_name') or youtube_data.get('username'),
+                        "tiktok": get_first_handle(social_media_data.get('tiktok')),
+                        "other": []
+                    },
+                    "bio_links": get_bio_links()
+                },
+                "content": {
+                    "caption": youtube_data.get('title', ''),
+                    "upload_date": youtube_data.get('upload_date', ''),
+                    "channel_name": youtube_data.get('channel_name', ""),
+                    "author_name": ""
+                },
+                "metadata": {
+                    "scraped_at": datetime.utcnow().isoformat(),
+                    "data_quality_score": "0.45"
+                },
+                "industry": None,
+                "revenue": None,
+                "lead_category": None,
+                "lead_sub_category": None,
+                "company_name": youtube_data.get('channel_name', ""),
+                "company_type": None,
+                "decision_makers": None,
+                "bdr": "AKG",
+                "product_interests": None,
+                "timeline": None,
+                "interest_level": None
+            }
+            return unified
+        except Exception:
+            return None
     
     async def scrape_from_file(self, file_path: str, output_file: str = "youtube_file_data.json") -> bool:
         """

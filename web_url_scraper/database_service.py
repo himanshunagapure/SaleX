@@ -422,8 +422,19 @@ def get_urls_by_type_and_icp(url_type, icp_identifier, limit=100):
     try:
         collection = get_collection()
         
-        # Query for URLs of the specified type and ICP identifier
-        query = {'url_type': url_type, 'icp_identifier': icp_identifier}
+        if not url_type or not icp_identifier:
+            print("Error: url_type and icp_identifier are required")
+            return []
+
+        # Query for URLs of the specified type and ICP identifier that are NOT processed
+        query = {
+            'url_type': url_type, 
+            'icp_identifier': icp_identifier,
+            '$or': [
+                {'processed': {'$exists': False}},  # No processed field means unprocessed
+                {'processed': False}  # Explicitly marked as unprocessed
+            ]
+        }
         cursor = collection.find(query).limit(limit)
         
         urls = list(cursor)
