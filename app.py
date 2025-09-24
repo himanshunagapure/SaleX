@@ -238,7 +238,7 @@ async def run_pipeline_async(orch, icp_data, selected_scrapers, icp_identifier, 
         
         # Step 4: Run selected scrapers
         logger.info("🚀 Step 4: Running scrapers...")
-        scraper_results = await orch.run_selected_scrapers(classified_urls, selected_scrapers, icp_identifier)
+        scraper_results = await orch.run_selected_scrapers(classified_urls, selected_scrapers, icp_data, icp_identifier)
         
         # Add web crawler results to scraper results
         # COMMENTED OUT - crl.py removed from flow

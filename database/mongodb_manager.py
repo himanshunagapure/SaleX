@@ -293,6 +293,16 @@ class MongoDBManager:
             logger.error(f"❌ Failed to get unified leads: {e}")
             return []
     
+    def get_collection(self, collection_name: str):
+        """Get a collection by name - used by crl.py"""
+        if collection_name in self.collections.values():
+            return self.db[collection_name]
+        elif collection_name in self.collections:
+            return self.db[self.collections[collection_name]]
+        else:
+            # Return the collection directly if it's a valid collection name
+            return self.db[collection_name]
+            
     def search_unified_leads(self, query: Dict[str, Any], limit: int = 100) -> List[Dict[str, Any]]:
         """
         Search unified leads collection

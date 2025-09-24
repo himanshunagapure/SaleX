@@ -35,7 +35,7 @@ from yt_scraper.main import YouTubeScraperInterface
 from database.mongodb_manager import get_mongodb_manager
 from filter_web_lead import MongoDBLeadProcessor
 from contact_scraper import run_optimized_contact_scraper
-# from web.crl import run_web_crawler_async  # Commented out - crl.py removed from flow
+from web.crl import run_web_crawler_async, get_mongodb_manager  # Commented out - crl.py removed from flow
 
 # Scraper registry centralization
 from scraper_registry import (
@@ -796,7 +796,7 @@ class LeadGenerationOrchestrator:
         return valid_urls
     
     async def run_selected_scrapers(self, classified_urls: Dict[str, List[str]], 
-                                  selected_scrapers: List[str], icp_identifier: str = 'default') -> Dict[str, Any]:
+                                  selected_scrapers: List[str], icp_data: Dict[str, Any], icp_identifier: str = 'default') -> Dict[str, Any]:
         """
         Run the selected scrapers on their respective URL collections
         """
@@ -829,17 +829,6 @@ class LeadGenerationOrchestrator:
                     try:
                         # Get the successful leads data
                         leads_data = web_results['unified_leads']
-                        
-                        # # Transform to unified schema and store
-                        # # Transform locally (web scraper exposes final leads, convert here) then save
-                        # unified_leads_web = []
-                        # for lead in leads_data:
-                        #     try:
-                        #         u = web_scraper._transform_web_final_to_unified(lead, icp_identifier)
-                        #         if u:
-                        #             unified_leads_web.append(u)
-                        #     except Exception:
-                        #         continue
                         unified_stats = self.mongodb_manager.insert_batch_unified_leads(leads_data) if leads_data else {
                             'success_count': 0,'duplicate_count':0,'failure_count':0,'total_processed':0
                         }
@@ -858,13 +847,40 @@ class LeadGenerationOrchestrator:
             except Exception as e:
                 logger.error(f"❌ Web scraper failed: {e}")
                 results['web_scraper'] = {'error': str(e)}
-        
+
+            # Run crl.py crawler (Google-search-driven lead extraction)
+        #if 'crl_scraper' in selected_scrapers:
+            logger.info("🔍 Running CRL web crawler...")
+            try:
+                if not icp_data:
+                    raise ValueError("ICP data not provided for CRL scraper")
+                
+                crl_results = await crl.run_web_crawler_async(icp_data, icp_identifier=icp_identifier)
+                
+                # Store summary in results
+                results['crl_scraper'] = crl_results
+                logger.info(f"✅ CRL crawler completed: {crl_results['summary']['total_leads_found']} leads found")
+                
+            except Exception as e:
+                logger.error(f"❌ CRL crawler failed: {e}")
+                results['crl_scraper'] = {'error': str(e)}
+                
         # Run Instagram scraper (optimized)
         if 'instagram' in selected_scrapers and classified_urls.get('instagram'):
             logger.info("📸 Running optimized Instagram scraper...")
             try:
                 # Use configured Instagram scraper settings
                 instagram_scraper = OptimizedInstagramScraper(
+                crl_results = crl_scraper.run_complete_pipeline(
+                    icp_identifier=icp_identifier
+                )
+                results['crl'] = crl_results
+                logger.info(f"✅ CRL scraper completed: {crl_results.get('summary', {}).get('successful_leads', 0)} leads")
+                
+            except Exception as e:
+                logger.error(f"❌ CRL scraper failed: {e}")
+                results['crl'] = {'error': str(e)}
+
                     headless=True,
                     enable_anti_detection=True,
                     is_mobile=False,
