@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 import pandas as pd
 import os
 import urllib.parse
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
 # Add browser automation for Cloudflare handling
 try:
@@ -143,10 +145,10 @@ async def crawl_with_cloudflare_handling(url: str, max_retries: int = 3) -> Dict
                         "Sec-Ch-Ua-Mobile": "?0",
                         "Sec-Ch-Ua-Platform": '"macOS"'
                     },
-                    "timeout": 60,  # Increased timeout for Cloudflare challenges
+                    "timeout": 30,  # Increased timeout for Cloudflare challenges
                     "follow_redirects": True,
                     "wait_for": "body",  # Wait for body to load
-                    "js_wait": 5000,  # Wait for JavaScript execution
+                    "js_wait": 3000,  # Wait for JavaScript execution
                     "css_selector": None,
                     "only_text": False,
                     "remove_overlay_elements": True,
@@ -539,56 +541,56 @@ def store_unified_leads(leads: List[Dict[str, Any]], mongodb_manager, icp_identi
         
         print(f"Unified leads storage complete: {stored_count} stored, {duplicate_count} duplicates, {error_count} errors")
         
-        # Export to CSV if requested
-        if export_csv and stored_count > 0:
-            try:
-                # Get only the successfully stored leads for CSV export
-                successfully_stored_leads = []
-                for lead in leads:
-                    if not check_lead_duplication(lead, existing_leads[:-stored_count]):  # Exclude recently added leads
-                        successfully_stored_leads.append(lead)
+        # # Export to CSV if requested
+        # if export_csv and stored_count > 0:
+        #     try:
+        #         # Get only the successfully stored leads for CSV export
+        #         successfully_stored_leads = []
+        #         for lead in leads:
+        #             if not check_lead_duplication(lead, existing_leads[:-stored_count]):  # Exclude recently added leads
+        #                 successfully_stored_leads.append(lead)
                 
-                # Flatten the leads for CSV export
-                flattened_leads = []
-                for lead in successfully_stored_leads[:stored_count]:  # Only export stored leads
-                    flat_lead = {
-                        'url': lead.get('url', ''),
-                        'platform': lead.get('platform', ''),
-                        'full_name': lead.get('profile', {}).get('full_name', ''),
-                        'bio': lead.get('profile', {}).get('bio', ''),
-                        'location': lead.get('profile', {}).get('location', ''),
-                        'job_title': lead.get('profile', {}).get('job_title', ''),
-                        'emails': ', '.join(lead.get('contact', {}).get('emails', [])),
-                        'phone_numbers': ', '.join(lead.get('contact', {}).get('phone_numbers', [])),
-                        'address': lead.get('contact', {}).get('address', ''),
-                        'websites': ', '.join(lead.get('contact', {}).get('websites', [])),
-                        'linkedin': lead.get('contact', {}).get('social_media_handles', {}).get('linkedin', ''),
-                        'twitter': lead.get('contact', {}).get('social_media_handles', {}).get('twitter', ''),
-                        'facebook': lead.get('contact', {}).get('social_media_handles', {}).get('facebook', ''),
-                        'instagram': lead.get('contact', {}).get('social_media_handles', {}).get('instagram', ''),
-                        'youtube': lead.get('contact', {}).get('social_media_handles', {}).get('youtube', ''),
-                        'tiktok': lead.get('contact', {}).get('social_media_handles', {}).get('tiktok', ''),
-                        'industry': lead.get('industry', ''),
-                        'company_name': lead.get('company_name', ''),
-                        'company_type': lead.get('company_type', ''),
-                        'lead_category': lead.get('lead_category', ''),
-                        'lead_sub_category': lead.get('lead_sub_category', ''),
-                        'decision_makers': lead.get('decision_makers', ''),
-                        'bdr': lead.get('bdr', ''),
-                        'scraped_at': lead.get('metadata', {}).get('scraped_at', ''),
-                        'data_quality_score': lead.get('metadata', {}).get('data_quality_score', ''),
-                        'icp_identifier': icp_identifier,
-                        'created_at': lead.get('created_at', '')
-                    }
-                    flattened_leads.append(flat_lead)
+        #         # Flatten the leads for CSV export
+        #         flattened_leads = []
+        #         for lead in successfully_stored_leads[:stored_count]:  # Only export stored leads
+        #             flat_lead = {
+        #                 'url': lead.get('url', ''),
+        #                 'platform': lead.get('platform', ''),
+        #                 'full_name': lead.get('profile', {}).get('full_name', ''),
+        #                 'bio': lead.get('profile', {}).get('bio', ''),
+        #                 'location': lead.get('profile', {}).get('location', ''),
+        #                 'job_title': lead.get('profile', {}).get('job_title', ''),
+        #                 'emails': ', '.join(lead.get('contact', {}).get('emails', [])),
+        #                 'phone_numbers': ', '.join(lead.get('contact', {}).get('phone_numbers', [])),
+        #                 'address': lead.get('contact', {}).get('address', ''),
+        #                 'websites': ', '.join(lead.get('contact', {}).get('websites', [])),
+        #                 'linkedin': lead.get('contact', {}).get('social_media_handles', {}).get('linkedin', ''),
+        #                 'twitter': lead.get('contact', {}).get('social_media_handles', {}).get('twitter', ''),
+        #                 'facebook': lead.get('contact', {}).get('social_media_handles', {}).get('facebook', ''),
+        #                 'instagram': lead.get('contact', {}).get('social_media_handles', {}).get('instagram', ''),
+        #                 'youtube': lead.get('contact', {}).get('social_media_handles', {}).get('youtube', ''),
+        #                 'tiktok': lead.get('contact', {}).get('social_media_handles', {}).get('tiktok', ''),
+        #                 'industry': lead.get('industry', ''),
+        #                 'company_name': lead.get('company_name', ''),
+        #                 'company_type': lead.get('company_type', ''),
+        #                 'lead_category': lead.get('lead_category', ''),
+        #                 'lead_sub_category': lead.get('lead_sub_category', ''),
+        #                 'decision_makers': lead.get('decision_makers', ''),
+        #                 'bdr': lead.get('bdr', ''),
+        #                 'scraped_at': lead.get('metadata', {}).get('scraped_at', ''),
+        #                 'data_quality_score': lead.get('metadata', {}).get('data_quality_score', ''),
+        #                 'icp_identifier': icp_identifier,
+        #                 'created_at': lead.get('created_at', '')
+        #             }
+        #             flattened_leads.append(flat_lead)
                 
-                if flattened_leads:
-                    df = pd.DataFrame(flattened_leads)
-                    df.to_csv(csv_filename, index=False)
-                    print(f"Leads exported to {csv_filename}")
+        #         if flattened_leads:
+        #             df = pd.DataFrame(flattened_leads)
+        #             df.to_csv(csv_filename, index=False)
+        #             print(f"Leads exported to {csv_filename}")
                 
-            except Exception as e:
-                print(f"Error exporting to CSV: {e}")
+        #     except Exception as e:
+        #         print(f"Error exporting to CSV: {e}")
         
         return {
             "stored": stored_count,
@@ -602,6 +604,93 @@ def store_unified_leads(leads: List[Dict[str, Any]], mongodb_manager, icp_identi
         import traceback
         traceback.print_exc()  # Print full traceback for debugging
         return {"stored": 0, "duplicates": 0, "errors": len(leads)}
+
+async def process_urls_concurrently(links, max_concurrent=3):
+    """Process multiple URLs concurrently with controlled concurrency"""
+    semaphore = asyncio.Semaphore(max_concurrent)
+    
+    async def process_single_url(link):
+        async with semaphore:
+            href = link['href']
+
+            if should_skip_url(href):
+                print(f"Skipping irrelevant/social/junk URL: {href}")
+                return None    
+            
+            lead_json_format = {
+                "name": "",
+                "contact_info": {
+                    "email": "",
+                    "phone": "",
+                    "linkedin": "",
+                    "twitter": "",
+                    "website": "",
+                    "others": "",
+                    "socialmedialinks": []
+                },
+                "company_name": "",
+                "time": "",
+                "link_details": "provide a short description of the link",
+                "type": "provide whether its a lead/competitor",
+                "lead_sub_category": "",
+                "what_we_can_offer": "",
+                "source_url": "",
+                "source_platform": "",
+                "location": "",
+                "industry": "",
+                "content_type": "",
+                "company_type": "",
+                "bio": "",
+                "address": ""
+            }
+            
+            try:
+                # Use Cloudflare-aware crawler for individual websites
+                crawl_result = await crawl_with_cloudflare_handling(link['href'])
+
+                if crawl_result.get('success'):
+                    result = crawl_result['content']
+                    truncated_result = result[:4000] if result else ""
+
+                    model = "gemini-2.5-flash"
+                    content = f'''From this profile/website extract important information for lead generation purposes. Focus on finding potential customers, not competitors. Include phone numbers and email addresses if found. Identify the source URL and the platform from which the information was extracted.
+
+                                Profile/Website Content: {truncated_result}
+
+                                Extract the information in the following json format and if any information is not present, leave the field empty. Also extract location, industry, company_type, bio, and address if available.
+
+                                {json.dumps(lead_json_format)}
+
+                                IMPORTANT: Only extract information if this appears to be a potential customer/lead. Return an empty dictionary if:
+                                - This is a competitor or service provider in the same industry
+                                - No contact information is available
+                                - The content is not relevant to lead generation
+                                '''
+
+                    response = generate_content(model, content)
+                    res = format_json_llm(response.text)
+
+                    if res and res != {}:
+                        res['source_url'] = href
+                        # Since we filter out social media, all remaining links are websites
+                        res['source_platform'] = 'Website'
+                        return res
+                        
+            except Exception as e:
+                print(f"Error processing {href}: {e}")
+            return None
+        
+    # Process URLs concurrently
+    tasks = [process_single_url(link) for link in links]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    # Filter out None results and exceptions
+    final_results = []
+    for result in results:
+        if result and not isinstance(result, Exception):
+            final_results.append(result)
+    
+    return final_results
 
 async def main_google_search(google_search_url, use_api_fallback: bool = True):
     """Modified main function to handle Google search results with API fallback"""
@@ -664,20 +753,20 @@ async def main_google_search(google_search_url, use_api_fallback: bool = True):
 
                 # Try multiple methods to extract links
                 external_links = result.links.get('external', [])
-                all_links.extend(external_links)
+                all_links.extend(external_links[:10]) # Limit to 10 links
 
                 # If no external links found, try to parse from HTML content
-                if not all_links and result.markdown:
-                    print("No external links found via crawler, trying manual parsing...")
-                    import re
-                    # Look for Google search result links in the HTML
-                    link_pattern = r'href="(https?://[^"]*?)"[^>]*?class="[^"]*?(?:yuRUbf|egMi0|d5oMvf)[^"]*?"'
-                    matches = re.findall(link_pattern, result.markdown, re.IGNORECASE)
-                    for match in matches[:10]:  # Limit to 10
-                        if match and not any(skip in match.lower() for skip in ['google.com', 'youtube.com', 'maps.google.com']):
-                            all_links.append({'href': match})
+                # if not all_links and result.markdown:
+                #     print("No external links found via crawler, trying manual parsing...")
+                #     
+                #     # Look for Google search result links in the HTML
+                #     link_pattern = r'href="(https?://[^"]*?)"[^>]*?class="[^"]*?(?:yuRUbf|egMi0|d5oMvf)[^"]*?"'
+                #     matches = re.findall(link_pattern, result.markdown, re.IGNORECASE)
+                #     for match in matches[:10]:  # Limit to 10
+                #         if match and not any(skip in match.lower() for skip in ['google.com', 'youtube.com', 'maps.google.com']):
+                #             all_links.append({'href': match})
 
-                await asyncio.sleep(3)  # Longer delay to avoid rate limiting
+                await asyncio.sleep(2)  # Longer delay to avoid rate limiting
 
             except Exception as e:
                 print(f"Error crawling Google search: {e}")
@@ -693,120 +782,7 @@ async def main_google_search(google_search_url, use_api_fallback: bool = True):
         print("3. Changes in Google's search result format")
         print("4. Network connectivity issues")
 
-    final_output = []
-
-    lead_json_format = {
-            "name": "",
-            "contact_info": {
-                "email": "",
-                "phone": "",
-                "linkedin": "",
-                "twitter": "",
-                "website": "",
-                "others": "",
-                "socialmedialinks": []
-            },
-            "company_name": "",
-            "time": "",
-            "link_details": "provide a short description of the link",
-            "type": "provide whether its a lead/competitor",
-            "lead_sub_category": ""
-            "what_we_can_offer": "",
-            "source_url": "",
-            "source_platform": "",
-            "location": "",
-            "industry": "",
-            "content_type": ""
-            "company_type": "",
-            "bio": "",
-            "address": ""
-        }
-        
-    for link in all_links:
-            href = link['href']
-
-            if should_skip_url(href):
-                print(f"Skipping irrelevant/social/junk URL: {href}")
-                continue    
-                
-            # # Check for social media platforms and extract URLs without scraping
-            # social_media_domains = [
-            #     'facebook.com', 'twitter.com', 'instagram.com', 'linkedin.com', 
-            #     'youtube.com', 'tiktok.com', 'reddit.com', 'pinterest.com', 
-            #     'snapchat.com', 'tumblr.com', 'discord.com', 'twitch.tv',
-            #     'x.com', 'threads.net', 'mastodon.social'
-            # ]
-            # if any(social_domain in link['href'].lower() for social_domain in social_media_domains):
-            #     # Extract social media URL without scraping
-            #     social_lead = {
-            #         "name": "",
-            #         "contact_info": {
-            #             "email": "",
-            #             "phone": "",
-            #             "linkedin": link['href'] if 'linkedin.com' in link['href'].lower() else "",
-            #             "twitter": link['href'] if any(x in link['href'].lower() for x in ['twitter.com', 'x.com']) else "",
-            #             "facebook": link['href'] if 'facebook.com' in link['href'].lower() else "",
-            #             "instagram": link['href'] if 'instagram.com' in link['href'].lower() else "",
-            #             "website": "",
-            #             "others": link['href'] if not any(x in link['href'].lower() for x in ['linkedin.com', 'twitter.com', 'x.com', 'facebook.com', 'instagram.com']) else "",
-            #             "socialmedialinks": [link['href']]
-            #         },
-            #         "company_name": "",
-            #         "time": "",
-            #         "link_details": f"Social media profile: {link['href']}",
-            #         "type": "social_media_profile",
-            #         "what_we_can_offer": "",
-            #         "source_url": link['href'],
-            #         "source_platform": "Social Media",
-            #         "location": "",
-            #         "industry": "",
-            #         "company_type": "",
-            #         "bio": "",
-            #         "address": ""
-            #     }
-            #     final_output.append(social_lead)
-            #     print(f"Extracted social media URL: {link['href']}")
-            #     continue
-                
-            try:
-                # Use Cloudflare-aware crawler for individual websites
-                crawl_result = await crawl_with_cloudflare_handling(link['href'])
-
-                if crawl_result.get('success'):
-                    result = crawl_result['content']
-                    truncated_result = result[:4000] if result else ""
-
-                    model = "gemini-2.5-flash"
-                    content = f'''From this profile/website extract important information for lead generation purposes. Focus on finding potential customers, not competitors. Include phone numbers and email addresses if found. Identify the source URL and the platform from which the information was extracted.
-
-                                Profile/Website Content: {truncated_result}
-
-                                Extract the information in the following json format and if any information is not present, leave the field empty. Also extract location, industry, company_type, bio, and address if available.
-
-                                {json.dumps(lead_json_format)}
-
-                                IMPORTANT: Only extract information if this appears to be a potential customer/lead. Return an empty dictionary if:
-                                - This is a competitor or service provider in the same industry
-                                - No contact information is available
-                                - The content is not relevant to lead generation
-                                '''
-
-                    response = generate_content(model, content)
-                    res = format_json_llm(response.text)
-
-                    if res and res != {}:
-                        res['source_url'] = link['href']
-                        # Since we filter out social media, all remaining links are websites
-                        res['source_platform'] = 'Website'
-                        final_output.append(res)
-                        print(f"Extracted lead from: {link['href']}")
-                else:
-                    print(f"Failed to crawl {link['href']}: {crawl_result.get('error', 'Unknown error')}")
-
-            except Exception as e:
-                print(f"Error processing link {link['href']}: {e}")
-
-            await asyncio.sleep(3)  # Increased delay for Cloudflare protection
+    final_output = await process_urls_concurrently(all_links[:10], max_concurrent=3)
         
     print(f"Total leads extracted: {len(final_output)}")
     social_count = sum(1 for lead in final_output if lead.get("type") == "social_media_profile")
@@ -844,12 +820,8 @@ def should_skip_url(url: str) -> bool:
         "imdb.com", "spotify.com", "apple.com"
     ]
 
-    if any(domain in url_lower for domain in skip_domains + junk_patterns):
+    if any(domain in url_lower for domain in skip_domains + junk_patterns + social_domains):
         return True
-
-    # Social media is not "skipped" — but handled differently
-    if any(domain in url_lower for domain in social_domains):
-        return False  
 
     return False
 
@@ -1102,7 +1074,7 @@ TARGET: {target_industry} companies
 PAIN POINTS: {pain_points_solved}
 USE CASES: {specific_occasions}
 
-Generate 3 Google search queries in **URL format** (https://www.google.com/search?q=...) 
+Generate 2 Google search queries in **URL format** (https://www.google.com/search?q=...) 
 that help me find potential customers, prospects, or decision-makers. 
 
 Requirements:
@@ -1128,7 +1100,7 @@ Return as: {{"queries": ["url1", "url2", "url3"]}}
         
         search_queries = []
         if res and "queries" in res:
-            search_queries = res["queries"][:3]  # Increased from 2 to 3 queries
+            search_queries = res["queries"][:2]  # 2 queries
         else:
             fallback_terms = product_name.replace(' ', '+').lower()
             search_queries = [
