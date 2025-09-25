@@ -33,11 +33,11 @@ from instagram_scraper.main_optimized import OptimizedInstagramScraper, Scraping
 from linkedin_scraper.main import LinkedInScraperMain, OptimizedLinkedInScraper
 from yt_scraper.main import YouTubeScraperInterface
 from facebook_scraper.main_optimized import OptimizedFacebookScraper, FacebookScrapingConfig
-from Company_directory.company_scraper_complete import UniversalScraper
+# from Company_directory.company_scraper_complete import UniversalScraper  # Commented out - company scraper disabled
 from database.mongodb_manager import get_mongodb_manager
 from filter_web_lead import MongoDBLeadProcessor
 from contact_scraper import run_optimized_contact_scraper
-from web.crl import run_web_crawler_async, get_mongodb_manager  # Commented out - crl.py removed from flow
+# from web.crl import run_web_crawler_async, get_mongodb_manager  # Commented out - crl.py removed from flow
 
 # Scraper registry centralization
 from scraper_registry import (
@@ -584,21 +584,10 @@ class LeadGenerationOrchestrator:
         logger.info(f"🔍 Collecting URLs for {len(queries)} queries...")
         
         # Initialize web_url_scraper
-        if not initialize_application():
-            logger.error("❌ Failed to initialize web_url_scraper")
-            # Even if initialization fails, ensure the scraped_urls collection exists
-            try:
-                from web_url_scraper.database_service import ensure_collection_exists
-                ensure_collection_exists()
-                logger.info("✅ Created scraped_urls collection despite initialization failure")
-            except Exception as e:
-                logger.error(f"❌ Failed to create scraped_urls collection: {e}")
-            return {
-                'instagram': [],
-                'linkedin': [],
-                'youtube': [],
-                'general': []
-            }
+        success = initialize_application()
+        if not success:
+            logger.warning("⚠️ web_url_scraper initialization failed, but continuing...")
+        # Always continue even if initialization fails
         
         all_urls = []
         
@@ -821,8 +810,7 @@ class LeadGenerationOrchestrator:
         return valid_urls
     
     async def run_selected_scrapers(self, classified_urls: Dict[str, List[str]], 
-                                  selected_scrapers: List[str], icp_identifier: str = 'default', 
-                                  icp_data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                                  selected_scrapers: List[str], icp_data: Dict[str, Any], icp_identifier: str = 'default') -> Dict[str, Any]:
         """
         Run the selected scrapers on their respective URL collections
         """
@@ -874,132 +862,149 @@ class LeadGenerationOrchestrator:
                 logger.error(f"❌ Web scraper failed: {e}")
                 results['web_scraper'] = {'error': str(e)}
 
+        # # Run crl.py crawler (Google-search-driven lead extraction)
+        # #if 'crl_scraper' in selected_scrapers:
+        # logger.info("🔍 Running CRL web crawler...")
+        # try:
+        #     if not icp_data:
+        #         raise ValueError("ICP data not provided for CRL scraper")
+        #     
+        #     crl_results = await run_web_crawler_async(icp_data, icp_identifier=icp_identifier)
+        #     
+        #     # Store summary in results
+        #     results['crl_scraper'] = crl_results
+        #     logger.info(f"✅ CRL crawler completed: {crl_results['summary']['total_leads_found']} leads found")
+        #     
+        # except Exception as e:
+        #     logger.error(f"❌ CRL crawler failed: {e}")
+        #     results['crl_scraper'] = {'error': str(e)}
+
         
-        # Run company_directory scraper (advanced business directory scraping)
-        if 'company_directory' in selected_scrapers and classified_urls.get('company_directory'):
-            logger.info("🏢 Running advanced company directory scraper...")
-            try:
-                # Get ICP data for the scraper - use provided data or fallback to hardcoded
-                if icp_data is None:
-                    icp_data = self.get_hardcoded_icp()
-                
-                # Extract service/product name from ICP data
-                product_details = icp_data.get('product_details', {})
-                service_name = product_details.get('product_name', 'services')
-                
-                # If product_name is too generic, try product_category
-                if service_name == 'services' or len(service_name) < 3:
-                    service_name = product_details.get('product_category', 'services')
-                
-                # Clean up service name for search
-                service_name = service_name.replace('Premium ', '').replace(' Services', '').strip()
-                
-                logger.info(f"🔍 Searching company directories for: {service_name}")
-                
-                company_directory_results = []
-                urls_company_dir = classified_urls['company_directory']
-                random.shuffle(urls_company_dir)
-                
-                # Process up to 3 company directory URLs
-                for i, directory_url in enumerate(urls_company_dir[:3]):
-                    logger.info(f"📋 Processing company directory {i+1}/3: {directory_url}")
-                    
-                    try:
-                        # Create UniversalScraper for this directory
-                        scraper = UniversalScraper(url=directory_url)
-                        
-                        # Perform search on this directory
-                        async with scraper:
-                            results_data = await scraper.perform_search_on_directory(service_name)
-                            
-                        # Extract leads from results
-                        extracted_leads = results_data.get("extracted_data", [])
-                        company_directory_results.extend(extracted_leads)
-                        
-                        logger.info(f"✅ Extracted {len(extracted_leads)} leads from {directory_url}")
-                        
-                        # Respectful delay between directories
-                        if i < 2:  # Don't delay after the last one
-                            await asyncio.sleep(random.uniform(3, 7))
-                            
-                    except Exception as e:
-                        logger.warning(f"❌ Failed to scrape company directory {directory_url}: {e}")
-                        continue
-                
-                # Transform and store company directory results in unified collection
-                if company_directory_results:
-                    try:
-                        # Transform leads to unified format
-                        unified_leads_cd = []
-                        for lead in company_directory_results:
-                            try:
-                                # Convert company directory format to unified format
-                                unified_lead = {
-                                    "name": lead.get("name", ""),
-                                    "contact_info": {
-                                        "email": lead.get("email", []),
-                                        "phone": lead.get("phone", []),
-                                        "website": lead.get("websites", []),
-                                        "linkedin": lead.get("social_media", {}).get("linkedin"),
-                                        "address": lead.get("address", "")
-                                    },
-                                    "company_name": lead.get("organization", lead.get("company_name", "")),
-                                    "time": datetime.now().isoformat(),
-                                    "link_details": f"Company directory extraction from {lead.get('source', 'unknown')}",
-                                    "type": "lead",
-                                    "what_we_can_offer": "Business directory services",
-                                    "source_url": lead.get("source", ""),
-                                    "source_platform": lead.get("source_platform", "Company Directory"),
-                                    "location": lead.get("location", ""),
-                                    "industry": lead.get("industry", ""),
-                                    "company_type": lead.get("company_type", ""),
-                                    "bio": lead.get("bio", ""),
-                                    "icp_identifier": icp_identifier,
-                                    "lead_category": "B2B",
-                                    "lead_sub_category": lead.get("industry", ""),
-                                    "status": "active"
-                                }
-                                unified_leads_cd.append(unified_lead)
-                            except Exception as e:
-                                logger.debug(f"Failed to transform company directory lead: {e}")
-                                continue
-                        
-                        # Store in unified collection
-                        unified_stats = self.mongodb_manager.insert_batch_unified_leads(unified_leads_cd) if unified_leads_cd else {
-                            'success_count': 0, 'duplicate_count': 0, 'failure_count': 0, 'total_processed': 0
-                        }
-                        
-                        company_directory_final_results = {
-                            'extracted_data': company_directory_results,
-                            'unified_leads': unified_leads_cd,
-                            'unified_storage': unified_stats,
-                            'total_directories_processed': len(urls_company_dir[:3]),
-                            'total_leads_extracted': len(company_directory_results)
-                        }
-                        
-                        logger.info(f"✅ Company directory leads stored in unified collection: {unified_stats['success_count']} leads")
-                        
-                    except Exception as e:
-                        logger.error(f"❌ Error storing company directory leads in unified collection: {e}")
-                        company_directory_final_results = {
-                            'extracted_data': company_directory_results,
-                            'unified_storage_error': str(e),
-                            'total_directories_processed': len(urls_company_dir[:3]),
-                            'total_leads_extracted': len(company_directory_results)
-                        }
-                else:
-                    company_directory_final_results = {
-                        'extracted_data': [],
-                        'total_directories_processed': len(urls_company_dir[:3]),
-                        'total_leads_extracted': 0
-                    }
-                
-                results['company_directory'] = company_directory_final_results
-                logger.info(f"✅ Company directory scraper completed: {len(company_directory_results)} leads from {len(urls_company_dir[:3])} directories")
-                
-            except Exception as e:
-                logger.error(f"❌ Company directory scraper failed: {e}")
-                results['company_directory'] = {'error': str(e)}
+        # # Run company_directory scraper (advanced business directory scraping) - COMMENTED OUT
+        # if 'company_directory' in selected_scrapers and classified_urls.get('company_directory'):
+        #     logger.info("🏢 Running advanced company directory scraper...")
+        #     try:
+        #         # Get ICP data for the scraper - use provided data or fallback to hardcoded
+        #         if icp_data is None:
+        #             icp_data = self.get_hardcoded_icp()
+        #         
+        #         # Extract service/product name from ICP data
+        #         product_details = icp_data.get('product_details', {})
+        #         service_name = product_details.get('product_name', 'services')
+        #         
+        #         # If product_name is too generic, try product_category
+        #         if service_name == 'services' or len(service_name) < 3:
+        #             service_name = product_details.get('product_category', 'services')
+        #         
+        #         # Clean up service name for search
+        #         service_name = service_name.replace('Premium ', '').replace(' Services', '').strip()
+        #         
+        #         logger.info(f"🔍 Searching company directories for: {service_name}")
+        #         
+        #         company_directory_results = []
+        #         urls_company_dir = classified_urls['company_directory']
+        #         random.shuffle(urls_company_dir)
+        #         
+        #         # Process up to 3 company directory URLs
+        #         for i, directory_url in enumerate(urls_company_dir[:3]):
+        #             logger.info(f"📋 Processing company directory {i+1}/3: {directory_url}")
+        #             
+        #             try:
+        #                 # Create UniversalScraper for this directory
+        #                 scraper = UniversalScraper(url=directory_url)
+        #                 
+        #                 # Perform search on this directory
+        #                 async with scraper:
+        #                 results_data = await scraper.perform_search_on_directory(service_name)
+        #                     
+        #                 # Extract leads from results
+        #                 extracted_leads = results_data.get("extracted_data", [])
+        #                 company_directory_results.extend(extracted_leads)
+        #                 
+        #                 logger.info(f"✅ Extracted {len(extracted_leads)} leads from {directory_url}")
+        #                 
+        #                 # Respectful delay between directories
+        #                 if i < 2:  # Don't delay after the last one
+        #                     await asyncio.sleep(random.uniform(3, 7))
+        #                     
+        #             except Exception as e:
+        #                 logger.warning(f"❌ Failed to scrape company directory {directory_url}: {e}")
+        #                 continue
+        #         
+        #         # Transform and store company directory results in unified collection
+        #         if company_directory_results:
+        #             try:
+        #                 # Transform leads to unified format
+        #                 unified_leads_cd = []
+        #                 for lead in company_directory_results:
+        #                     try:
+        #                         # Convert company directory format to unified format
+        #                         unified_lead = {
+        #                             "name": lead.get("name", ""),
+        #                             "contact_info": {
+        #                                 "email": lead.get("email", []),
+        #                                 "phone": lead.get("phone", []),
+        #                             "website": lead.get("websites", []),
+        #                             "linkedin": lead.get("social_media", {}).get("linkedin"),
+        #                             "address": lead.get("address", "")
+        #                         },
+        #                         "company_name": lead.get("organization", lead.get("company_name", "")),
+        #                         "time": datetime.now().isoformat(),
+        #                         "link_details": f"Company directory extraction from {lead.get('source', 'unknown')}",
+        #                         "type": "lead",
+        #                         "what_we_can_offer": "Business directory services",
+        #                         "source_url": lead.get("source", ""),
+        #                         "source_platform": lead.get("source_platform", "Company Directory"),
+        #                         "location": lead.get("location", ""),
+        #                         "industry": lead.get("industry", ""),
+        #                         "company_type": lead.get("company_type", ""),
+        #                         "bio": lead.get("bio", ""),
+        #                         "icp_identifier": icp_identifier,
+        #                         "lead_category": "B2B",
+        #                         "lead_sub_category": lead.get("industry", ""),
+        #                         "status": "active"
+        #                     }
+        #                     unified_leads_cd.append(unified_lead)
+        #                 except Exception as e:
+        #                     logger.debug(f"Failed to transform company directory lead: {e}")
+        #                     continue
+        #             
+        #             # Store in unified collection
+        #             unified_stats = self.mongodb_manager.insert_batch_unified_leads(unified_leads_cd) if unified_leads_cd else {
+        #                 'success_count': 0, 'duplicate_count': 0, 'failure_count': 0, 'total_processed': 0
+        #             }
+        #             
+        #             company_directory_final_results = {
+        #                 'extracted_data': company_directory_results,
+        #                 'unified_leads': unified_leads_cd,
+        #                 'unified_storage': unified_stats,
+        #                 'total_directories_processed': len(urls_company_dir[:3]),
+        #                 'total_leads_extracted': len(company_directory_results)
+        #             }
+        #             
+        #             logger.info(f"✅ Company directory leads stored in unified collection: {unified_stats['success_count']} leads")
+        #             
+        #         except Exception as e:
+        #             logger.error(f"❌ Error storing company directory leads in unified collection: {e}")
+        #             company_directory_final_results = {
+        #                 'extracted_data': company_directory_results,
+        #                 'unified_storage_error': str(e),
+        #                 'total_directories_processed': len(urls_company_dir[:3]),
+        #                 'total_leads_extracted': len(company_directory_results)
+        #             }
+        #     else:
+        #         company_directory_final_results = {
+        #             'extracted_data': [],
+        #             'total_directories_processed': len(urls_company_dir[:3]),
+        #             'total_leads_extracted': 0
+        #         }
+        #     
+        #     results['company_directory'] = company_directory_final_results
+        #     logger.info(f"✅ Company directory scraper completed: {len(company_directory_results)} leads from {len(urls_company_dir[:3])} directories")
+        #     
+        # except Exception as e:
+        #     logger.error(f"❌ Company directory scraper failed: {e}")
+        #     results['company_directory'] = {'error': str(e)}
         
         # Run Instagram scraper (optimized)
         if 'instagram' in selected_scrapers and classified_urls.get('instagram'):

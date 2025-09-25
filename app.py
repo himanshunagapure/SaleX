@@ -15,6 +15,13 @@ from flask_cors import CORS
 from werkzeug.exceptions import BadRequest
 import logging
 
+# Load environment variables from .env file
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # dotenv not installed, continue without it
+
 # Add current directory to path for imports
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
@@ -124,7 +131,7 @@ def run_lead_generation():
             "product_details": {...},
             "icp_information": {...}
         },
-        "selected_scrapers": ["web_scraper", "company_directory", "instagram", "linkedin", "youtube", "facebook"]
+        "selected_scrapers": ["web_scraper", "instagram", "linkedin", "youtube", "facebook"]  # company_directory commented out
     }
     """
     try:
@@ -779,7 +786,7 @@ def generate_queries_only():
 def run_single_scraper(scraper_name):
     """
     Run lead generation pipeline for a single scraper.
-    Supported scraper_name values: instagram, linkedin, web_scraper, youtube, facebook, company_directory
+    Supported scraper_name values: instagram, linkedin, web_scraper, youtube, facebook  # company_directory commented out
     
     Expected payload:
     {
@@ -808,12 +815,13 @@ def run_single_scraper(scraper_name):
 
         logger.info(f"Starting single-scraper pipeline for: {scraper_name}")
 
-        # Get orchestrator instance
-        orch = get_orchestrator()
+        # Get orchestrator instance - use fresh instance for testing
+        from main import LeadGenerationOrchestrator
+        orch = LeadGenerationOrchestrator()
 
         # Run pipeline asynchronously for one scraper
         result = run_async(run_single_scraper_pipeline_async(orch, icp_data, scraper_name))
-
+        
         return jsonify({
             "success": True,
             "data": result,
@@ -1179,7 +1187,7 @@ def not_found(error):
             "GET /api/urls/available - Get available unprocessed URLs count",
             "GET /api/leads/by-icp/<icp_identifier> - Get leads by ICP identifier",
             "GET /api/leads/icp-stats/<icp_identifier> - Get ICP statistics",
-            "POST /api/scraper/<scraper_name>/run - Run single scraper pipeline (instagram|linkedin|web_scraper|youtube|facebook|company_directory)",
+            "POST /api/scraper/<scraper_name>/run - Run single scraper pipeline (instagram|linkedin|web_scraper|youtube|facebook)",  # company_directory commented out
             "GET /api/status - Get system status"
         ]
     }), 404
