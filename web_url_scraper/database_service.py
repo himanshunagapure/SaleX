@@ -412,7 +412,7 @@ def get_urls_by_type_and_icp(url_type, icp_identifier, limit=100):
     Get URLs by type and ICP identifier from the database.
     
     Args:
-        url_type (str): Type of URL to retrieve (general, instagram, linkedin, youtube)
+        url_type (str): Type of URL to retrieve (general, instagram, linkedin, youtube, company_directory)
         icp_identifier (str): ICP identifier to filter by
         limit (int): Maximum number of URLs to return
     
@@ -544,7 +544,7 @@ def get_unprocessed_urls_by_type(url_type, limit=10):
     Get unprocessed URLs of a specific type for scraping.
     
     Args:
-        url_type (str): The URL type to filter by ('instagram', 'linkedin', 'youtube', 'general')
+        url_type (str): The URL type to filter by ('instagram', 'linkedin', 'youtube', 'company_directory', 'general')
         limit (int): Maximum number of URLs to return
     
     Returns:

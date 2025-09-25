@@ -49,3 +49,15 @@ class Lead(BaseModel):
 
 	notes: Optional[str] = None
 	status: Optional[str] = None
+
+
+class FacebookScrapingConfig(BaseModel):
+	"""Configuration for Facebook scraping operations"""
+	max_workers: int = Field(default=3, description="Maximum concurrent workers for Facebook scraping")
+	batch_size: int = Field(default=3, description="Number of URLs to process in each batch")
+	context_pool_size: int = Field(default=3, description="Number of browser contexts to maintain")
+	rate_limit_delay: float = Field(default=3.0, description="Delay between requests in seconds")
+	context_reuse_limit: int = Field(default=10, description="Maximum number of scrapes per browser context before renewal")
+	max_retries: int = Field(default=3, description="Maximum retry attempts for failed scrapes")
+	retry_delay: float = Field(default=2.0, description="Delay between retry attempts in seconds")
+	timeout_seconds: int = Field(default=30, description="Timeout for individual scrape operations")

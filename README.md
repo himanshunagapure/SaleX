@@ -1,6 +1,6 @@
 # AI Lead Generation Application
 
-A comprehensive lead generation system that integrates multiple scrapers to collect, process, and enhance leads from various sources with unified storage and processing. Scraping (Instagram, LinkedIn, YouTube, and general websites) to identify potential customers based on Ideal Customer Profiles (ICP). The system features a unified data model for consistent lead storage and processing across all platforms.
+A comprehensive lead generation system that integrates multiple scrapers to collect, process, and enhance leads from various sources with unified storage and processing. Scraping (Instagram, LinkedIn, YouTube, Facebook, and general websites) to identify potential customers based on Ideal Customer Profiles (ICP). The system features a unified data model for consistent lead storage and processing across all platforms.
 
 ## Table of Contents
 
@@ -21,13 +21,13 @@ A comprehensive lead generation system that integrates multiple scrapers to coll
 
 ## Overview
 
-This application orchestrates multiple specialized scrapers to collect potential lead data from various platforms based on a predefined Ideal Customer Profile. It uses Google's Gemini AI to generate targeted search queries and coordinates data collection across web scraping, Instagram, LinkedIn, and YouTube platforms.
+This application orchestrates multiple specialized scrapers to collect potential lead data from various platforms based on a predefined Ideal Customer Profile. It uses Google's Gemini AI to generate targeted search queries and coordinates data collection across web scraping, Instagram, LinkedIn, YouTube, and Facebook platforms.
 
 **Target Use Case:** Premium bus travel and group tour services seeking corporate clients, wedding planners, educational institutions, and family group organizers.
 
 ## Key Features
 
-- **Multi-platform Scraping**: Unified interface for Instagram, LinkedIn, YouTube, and general web scraping
+- **Multi-platform Scraping**: Unified interface for Instagram, LinkedIn, YouTube, Facebook, and general web scraping
 - **AI-Powered Query Generation**: Uses Google's Gemini AI to generate targeted search queries
 - **Unified Data Model**: Standardized data storage across all platforms in the `unified_leads` collection
 - **Dual Storage**: Maintains both platform-specific and unified data collections
@@ -122,8 +122,8 @@ URLs from Search Results
     ▼     ▼     ▼     ▼     ▼
  General │  Instagram │ LinkedIn │ YouTube
          │           │          │
-         ▼           ▼          ▼
-   Web Scraper | IG Scraper | LI Scraper | YT Scraper
+         ▼           ▼          ▼          ▼
+   Web Scraper | IG Scraper | LI Scraper | YT Scraper | FB Scraper
 ```
 
 ## Scrapers
@@ -152,6 +152,12 @@ URLs from Search Results
 - **Data Extracted**: Channel info, subscriber count, video content analysis
 - **Technology**: Browser automation with content analysis
 
+### 5. Facebook Scraper
+- **Purpose**: Extracts profile and page information from Facebook
+- **Target**: Community groups, event organizers, local businesses
+- **Data Extracted**: Profile info, page details, group memberships, contact information
+- **Technology**: Browser automation with anti-detection measures
+
 ## Database
 
 The application uses MongoDB for data storage with the following collections:
@@ -163,7 +169,7 @@ The application uses MongoDB for data storage with the following collections:
 {
   "_id": ObjectId,
   "url": "https://example.com",
-  "url_type": "general|instagram|linkedin|youtube",
+  "url_type": "general|instagram|linkedin|youtube|facebook",
   "query": "search query used",
   "domain": "example.com",
   "created_at": ISODate,
@@ -179,6 +185,7 @@ The application uses MongoDB for data storage with the following collections:
 - `instagram_leads` - Instagram profile data  
 - `linkedin_leads` - LinkedIn profile/company data
 - `youtube_leads` - YouTube channel data
+- `facebook_leads` - Facebook profile and page data
 - `leadgen_leads` - Processed and filtered leads from all sources
 
 ## Unified Data Model
@@ -335,12 +342,13 @@ Currently, the API does not require authentication for development. In productio
     {
       "success": true,
       "data": {
-        "available_scrapers": ["web_scraper", "instagram", "linkedin", "youtube"],
+        "available_scrapers": ["web_scraper", "instagram", "linkedin", "youtube", "facebook"],
         "scrapers_info": {
           "web_scraper": {"description": "General web page scraper", "requires_urls": true},
           "instagram": {"description": "Instagram profile scraper", "requires_urls": false},
           "linkedin": {"description": "LinkedIn profile scraper", "requires_urls": false},
-          "youtube": {"description": "YouTube channel scraper", "requires_urls": false}
+          "youtube": {"description": "YouTube channel scraper", "requires_urls": false},
+          "facebook": {"description": "Facebook profile and page scraper", "requires_urls": false}
         }
       }
     }

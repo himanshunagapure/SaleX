@@ -44,6 +44,7 @@ class MongoDBManager:
             'linkedin': 'linkedin_leads', 
             'web': 'web_leads',
             'youtube': 'youtube_leads',
+            'company_directory': 'company_directory_leads',
             'unified': 'unified_leads'  # New unified collection
         }
 
@@ -439,7 +440,7 @@ class MongoDBManager:
         
         Args:
             leads_data: List of lead data dictionaries
-            source: Source scraper ('instagram', 'linkedin', 'web', 'youtube')
+            source: Source scraper ('instagram', 'linkedin', 'web', 'youtube', 'company_directory')
             
         Returns:
             Dict with success and failure counts
@@ -482,7 +483,7 @@ class MongoDBManager:
         Get leads from a specific source
         
         Args:
-            source: Source scraper ('instagram', 'linkedin', 'web', 'youtube')
+            source: Source scraper ('instagram', 'linkedin', 'web', 'youtube', 'company_directory')
             limit: Maximum number of results
             skip: Number of results to skip
             
@@ -533,7 +534,7 @@ class MongoDBManager:
         Get all URLs from the specified collection
         
         Args:
-            source: Source collection to retrieve URLs from ('web', 'instagram', 'linkedin', 'youtube')
+            source: Source collection to retrieve URLs from ('web', 'instagram', 'linkedin', 'youtube', 'company_directory')
             include_metadata: Whether to include scraped_at and other metadata
             
         Returns:

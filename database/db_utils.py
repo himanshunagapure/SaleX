@@ -20,7 +20,7 @@ class DatabaseUtils:
         stats = self.mongodb_manager.get_database_stats()
         
         # Add additional statistics
-        for source in ['instagram', 'linkedin', 'web', 'youtube']:
+        for source in ['instagram', 'linkedin', 'web', 'youtube', 'company_directory']:
             try:
                 collection = self.mongodb_manager.db[self.mongodb_manager.collections[source]]
                 
@@ -56,7 +56,7 @@ class DatabaseUtils:
         
         Args:
             query: Text to search in business names, usernames, etc.
-            source: Specific source ('instagram', 'linkedin', 'web', 'youtube')
+            source: Specific source ('instagram', 'linkedin', 'web', 'youtube', 'company_directory')
             limit: Maximum number of results
             date_from: Start date (YYYY-MM-DD format)
             date_to: End date (YYYY-MM-DD format)
@@ -135,7 +135,7 @@ class DatabaseUtils:
         else:
             # Search across all collections
             duplicates = []
-            for source_name in ['instagram', 'linkedin', 'web', 'youtube']:
+            for source_name in ['instagram', 'linkedin', 'web', 'youtube', 'company_directory']:
                 collection = self.mongodb_manager.db[self.mongodb_manager.collections[source_name]]
                 # Find documents with same email or phone
                 pipeline = [
@@ -206,7 +206,7 @@ class DatabaseUtils:
             result = collection.delete_many(query)
             deleted_count = result.deleted_count
         else:
-            for source_name in ['instagram', 'linkedin', 'web', 'youtube']:
+            for source_name in ['instagram', 'linkedin', 'web', 'youtube', 'company_directory']:
                 collection = self.mongodb_manager.db[self.mongodb_manager.collections[source_name]]
                 result = collection.delete_many(query)
                 deleted_count += result.deleted_count
@@ -222,7 +222,7 @@ def main():
     parser = argparse.ArgumentParser(description="Database Utilities for Lead Generation")
     parser.add_argument("--action", choices=['stats', 'search', 'export', 'recent', 'duplicates', 'cleanup'], 
                        required=True, help="Action to perform")
-    parser.add_argument("--source", choices=['instagram', 'linkedin', 'web', 'youtube'], 
+    parser.add_argument("--source", choices=['instagram', 'linkedin', 'web', 'youtube', 'company_directory'], 
                        help="Specific source to query")
     parser.add_argument("--query", help="Search query")
     parser.add_argument("--limit", type=int, default=100, help="Maximum results")

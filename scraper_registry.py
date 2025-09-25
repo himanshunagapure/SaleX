@@ -46,9 +46,21 @@ PROMPT_BLOCKS: Dict[str, str] = {
         '- Prefer: (site:youtube.com/@ OR site:youtube.com/channel)\n'
         '- Use operators: intitle:, quotes, OR as needed.\n'
     ),
+    'facebook': (
+        'STRICT: Every query MUST target Facebook profiles, pages, or posts only.\n'
+        '- Always include: site:facebook.com\n'
+        '- Prefer: (site:facebook.com/profile.php OR site:facebook.com/pages OR site:facebook.com/groups OR site:facebook.com/events)\n'
+        '- Use operators: intitle:, quotes for exact roles, OR for multiple personas.\n'
+    ),
+    'company_directory': (
+        'STRICT: Every query MUST target business directory websites only.\n'
+        '- Always include business directory sites: site:thomasnet.com OR site:indiamart.com OR site:kompass.com OR site:yellowpages.com OR site:yelp.com OR site:crunchbase.com OR site:opencorporates.com\n'
+        '- Prefer company/supplier/manufacturer listings and directories\n'
+        '- Use operators: intitle:"directory" OR intitle:"companies" OR intitle:"suppliers", quotes for exact business types.\n'
+    ),
     'web_scraper': (
         'STRICT: General web discovery (non-social).\n'
-        '- EXCLUDE major social sites in queries (avoid instagram.com, linkedin.com, youtube.com).\n'
+        '- EXCLUDE major social sites in queries (avoid instagram.com, linkedin.com, youtube.com, facebook.com).\n'
         '- Use intitle:, inurl:, and AND/OR operators to target likely company/contact pages.\n'
     ),
 }
@@ -59,6 +71,8 @@ SITE_FILTERS: Dict[str, str] = {
     'instagram': 'site:instagram.com (site:instagram.com/p OR site:instagram.com/reel OR site:instagram.com/*) ',
     'linkedin': 'site:linkedin.com (site:linkedin.com/in OR site:linkedin.com/company OR site:linkedin.com/posts OR site:linkedin.com/newsletters) ',
     'youtube': 'site:youtube.com (site:youtube.com/@ OR site:youtube.com/channel) ',
+    'facebook': 'site:facebook.com (site:facebook.com/profile.php OR site:facebook.com/pages OR site:facebook.com/groups OR site:facebook.com/events) ',
+    'company_directory': 'site:thomasnet.com OR site:indiamart.com OR site:kompass.com OR site:yellowpages.com OR site:yelp.com OR site:crunchbase.com OR site:opencorporates.com OR site:manta.com OR site:dexknows.com OR site:superpages.com ',
     # web_scraper intentionally omitted from platform site filters
 }
 
@@ -70,6 +84,13 @@ SCRAPERS: Dict[str, ScraperMeta] = {
         site_filter='',
         prompt_block=PROMPT_BLOCKS['web_scraper'],
         description='General web scraping for websites'
+    ),
+    'company_directory': ScraperMeta(
+        name='company_directory',
+        url_type='company_directory',
+        site_filter=SITE_FILTERS['company_directory'],
+        prompt_block=PROMPT_BLOCKS['company_directory'],
+        description='Business directory websites (ThomasNet, IndiaMart, YellowPages, etc.)'
     ),
     'instagram': ScraperMeta(
         name='instagram',
@@ -91,6 +112,13 @@ SCRAPERS: Dict[str, ScraperMeta] = {
         site_filter=SITE_FILTERS['youtube'],
         prompt_block=PROMPT_BLOCKS['youtube'],
         description='YouTube channels and videos'
+    ),
+    'facebook': ScraperMeta(
+        name='facebook',
+        url_type='facebook',
+        site_filter=SITE_FILTERS['facebook'],
+        prompt_block=PROMPT_BLOCKS['facebook'],
+        description='Facebook profiles, pages, and posts'
     ),
 }
 

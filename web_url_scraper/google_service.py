@@ -164,7 +164,7 @@ def detect_url_type(url):
         url (str): URL to analyze
     
     Returns:
-        str: URL type ('instagram', 'facebook', 'reddit', 'quora', 'twitter', 'linkedin', 'youtube', 'general')
+        str: URL type ('instagram', 'facebook', 'reddit', 'quora', 'twitter', 'linkedin', 'youtube', 'company_directory', 'general')
     """
     if not url:
         return 'general'
@@ -193,6 +193,20 @@ def detect_url_type(url):
             return 'linkedin'
         elif domain == 'youtube.com' or domain.endswith('.youtube.com'):
             return 'youtube'
+        # Company directory domains
+        elif any(cd_domain in domain for cd_domain in [
+            'thomasnet.com', 'indiamart.com', 'kompass.com', 'yellowpages.com',
+            'yelp.com', 'crunchbase.com', 'opencorporates.com', 'manta.com',
+            'dexknows.com', 'superpages.com', 'bizdir.com', 'businessdirectory.com',
+            'local.com', 'bbb.org', 'angieslist.com', 'houzz.com', 'thumbtack.com',
+            'homeadvisor.com', 'angi.com', 'cylex.net', 'tuugo.us', 'hotfrog.com',
+            'brownbook.net', 'citysearch.com', 'insiderpages.com', 'showmelocal.com',
+            'getthedata.co', 'companycheck.co.uk', 'duedil.com', 'thesunbusinessdirectory.com',
+            'yell.com', 'touchlocal.com', 'cylex-uk.co.uk', 'ukindex.co.uk',
+            'findopen.co.uk', 'thesun.co.uk', 'scotsman.com', 'telegraph.co.uk',
+            'independent.co.uk'
+        ]):
+            return 'company_directory'
         else:
             return 'general'
             

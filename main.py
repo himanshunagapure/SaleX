@@ -32,6 +32,8 @@ from web_scraper.main_app import WebScraperOrchestrator
 from instagram_scraper.main_optimized import OptimizedInstagramScraper, ScrapingConfig
 from linkedin_scraper.main import LinkedInScraperMain, OptimizedLinkedInScraper
 from yt_scraper.main import YouTubeScraperInterface
+from facebook_scraper.main_optimized import OptimizedFacebookScraper, FacebookScrapingConfig
+from Company_directory.company_scraper_complete import UniversalScraper
 from database.mongodb_manager import get_mongodb_manager
 from filter_web_lead import MongoDBLeadProcessor
 from contact_scraper import run_optimized_contact_scraper
@@ -211,6 +213,7 @@ class LeadGenerationOrchestrator:
         print("2. instagram - Instagram profiles and posts")
         print("3. linkedin - LinkedIn profiles and companies")
         print("4. youtube - YouTube channels and videos")
+        print("5. facebook - Facebook profiles, pages, and posts")
         
         selection = input("\nEnter scrapers to use (comma-separated, or press Enter for default): ").strip()
         
@@ -223,10 +226,12 @@ class LeadGenerationOrchestrator:
             '2': 'instagram', 
             '3': 'linkedin',
             '4': 'youtube',
+            '5': 'facebook',
             'web_scraper': 'web_scraper',
             'instagram': 'instagram',
             'linkedin': 'linkedin',
-            'youtube': 'youtube'
+            'youtube': 'youtube',
+            'facebook': 'facebook'
         }
         
         for item in selection.split(','):
@@ -665,14 +670,30 @@ class LeadGenerationOrchestrator:
     
     def _classify_urls(self, urls_data: List[Dict[str, Any]]) -> Dict[str, List[str]]:
         """
-        Classify URLs by type (instagram, linkedin, youtube, general)
+        Classify URLs by type (instagram, linkedin, youtube, company_directory, general)
         """
         classified = {
             'instagram': [],
             'linkedin': [],
             'youtube': [],
+            'facebook': [],
+            'company_directory': [],
             'general': []
         }
+        
+        # Known company directory domains
+        company_directory_domains = [
+            'thomasnet.com', 'indiamart.com', 'kompass.com', 'yellowpages.com',
+            'yelp.com', 'crunchbase.com', 'opencorporates.com', 'manta.com',
+            'dexknows.com', 'superpages.com', 'bizdir.com', 'businessdirectory.com',
+            'local.com', 'bbb.org', 'angieslist.com', 'houzz.com', 'thumbtack.com',
+            'homeadvisor.com', 'angi.com', 'cylex.net', 'tuugo.us', 'hotfrog.com',
+            'brownbook.net', 'citysearch.com', 'insiderpages.com', 'showmelocal.com',
+            'getthedata.co', 'companycheck.co.uk', 'duedil.com', 'thesunbusinessdirectory.com',
+            'yell.com', 'touchlocal.com', 'cylex-uk.co.uk', 'ukindex.co.uk',
+            'findopen.co.uk', 'thesun.co.uk', 'scotsman.com', 'telegraph.co.uk',
+            'independent.co.uk'
+        ]
         
         for url_data in urls_data:
             url = url_data.get('url', '')
@@ -684,6 +705,10 @@ class LeadGenerationOrchestrator:
                 classified['linkedin'].append(url)
             elif 'youtube.com' in domain or 'youtu.be' in domain:
                 classified['youtube'].append(url)
+            elif 'facebook.com' in domain:
+                classified['facebook'].append(url)
+            elif any(cd_domain in domain for cd_domain in company_directory_domains):
+                classified['company_directory'].append(url)
             else:
                 classified['general'].append(url)
         
@@ -796,7 +821,8 @@ class LeadGenerationOrchestrator:
         return valid_urls
     
     async def run_selected_scrapers(self, classified_urls: Dict[str, List[str]], 
-                                  selected_scrapers: List[str], icp_data: Dict[str, Any], icp_identifier: str = 'default') -> Dict[str, Any]:
+                                  selected_scrapers: List[str], icp_identifier: str = 'default', 
+                                  icp_data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Run the selected scrapers on their respective URL collections
         """
@@ -848,39 +874,139 @@ class LeadGenerationOrchestrator:
                 logger.error(f"❌ Web scraper failed: {e}")
                 results['web_scraper'] = {'error': str(e)}
 
-            # Run crl.py crawler (Google-search-driven lead extraction)
-        #if 'crl_scraper' in selected_scrapers:
-            logger.info("🔍 Running CRL web crawler...")
+        
+        # Run company_directory scraper (advanced business directory scraping)
+        if 'company_directory' in selected_scrapers and classified_urls.get('company_directory'):
+            logger.info("🏢 Running advanced company directory scraper...")
             try:
-                if not icp_data:
-                    raise ValueError("ICP data not provided for CRL scraper")
+                # Get ICP data for the scraper - use provided data or fallback to hardcoded
+                if icp_data is None:
+                    icp_data = self.get_hardcoded_icp()
                 
-                crl_results = await crl.run_web_crawler_async(icp_data, icp_identifier=icp_identifier)
+                # Extract service/product name from ICP data
+                product_details = icp_data.get('product_details', {})
+                service_name = product_details.get('product_name', 'services')
                 
-                # Store summary in results
-                results['crl_scraper'] = crl_results
-                logger.info(f"✅ CRL crawler completed: {crl_results['summary']['total_leads_found']} leads found")
+                # If product_name is too generic, try product_category
+                if service_name == 'services' or len(service_name) < 3:
+                    service_name = product_details.get('product_category', 'services')
+                
+                # Clean up service name for search
+                service_name = service_name.replace('Premium ', '').replace(' Services', '').strip()
+                
+                logger.info(f"🔍 Searching company directories for: {service_name}")
+                
+                company_directory_results = []
+                urls_company_dir = classified_urls['company_directory']
+                random.shuffle(urls_company_dir)
+                
+                # Process up to 3 company directory URLs
+                for i, directory_url in enumerate(urls_company_dir[:3]):
+                    logger.info(f"📋 Processing company directory {i+1}/3: {directory_url}")
+                    
+                    try:
+                        # Create UniversalScraper for this directory
+                        scraper = UniversalScraper(url=directory_url)
+                        
+                        # Perform search on this directory
+                        async with scraper:
+                            results_data = await scraper.perform_search_on_directory(service_name)
+                            
+                        # Extract leads from results
+                        extracted_leads = results_data.get("extracted_data", [])
+                        company_directory_results.extend(extracted_leads)
+                        
+                        logger.info(f"✅ Extracted {len(extracted_leads)} leads from {directory_url}")
+                        
+                        # Respectful delay between directories
+                        if i < 2:  # Don't delay after the last one
+                            await asyncio.sleep(random.uniform(3, 7))
+                            
+                    except Exception as e:
+                        logger.warning(f"❌ Failed to scrape company directory {directory_url}: {e}")
+                        continue
+                
+                # Transform and store company directory results in unified collection
+                if company_directory_results:
+                    try:
+                        # Transform leads to unified format
+                        unified_leads_cd = []
+                        for lead in company_directory_results:
+                            try:
+                                # Convert company directory format to unified format
+                                unified_lead = {
+                                    "name": lead.get("name", ""),
+                                    "contact_info": {
+                                        "email": lead.get("email", []),
+                                        "phone": lead.get("phone", []),
+                                        "website": lead.get("websites", []),
+                                        "linkedin": lead.get("social_media", {}).get("linkedin"),
+                                        "address": lead.get("address", "")
+                                    },
+                                    "company_name": lead.get("organization", lead.get("company_name", "")),
+                                    "time": datetime.now().isoformat(),
+                                    "link_details": f"Company directory extraction from {lead.get('source', 'unknown')}",
+                                    "type": "lead",
+                                    "what_we_can_offer": "Business directory services",
+                                    "source_url": lead.get("source", ""),
+                                    "source_platform": lead.get("source_platform", "Company Directory"),
+                                    "location": lead.get("location", ""),
+                                    "industry": lead.get("industry", ""),
+                                    "company_type": lead.get("company_type", ""),
+                                    "bio": lead.get("bio", ""),
+                                    "icp_identifier": icp_identifier,
+                                    "lead_category": "B2B",
+                                    "lead_sub_category": lead.get("industry", ""),
+                                    "status": "active"
+                                }
+                                unified_leads_cd.append(unified_lead)
+                            except Exception as e:
+                                logger.debug(f"Failed to transform company directory lead: {e}")
+                                continue
+                        
+                        # Store in unified collection
+                        unified_stats = self.mongodb_manager.insert_batch_unified_leads(unified_leads_cd) if unified_leads_cd else {
+                            'success_count': 0, 'duplicate_count': 0, 'failure_count': 0, 'total_processed': 0
+                        }
+                        
+                        company_directory_final_results = {
+                            'extracted_data': company_directory_results,
+                            'unified_leads': unified_leads_cd,
+                            'unified_storage': unified_stats,
+                            'total_directories_processed': len(urls_company_dir[:3]),
+                            'total_leads_extracted': len(company_directory_results)
+                        }
+                        
+                        logger.info(f"✅ Company directory leads stored in unified collection: {unified_stats['success_count']} leads")
+                        
+                    except Exception as e:
+                        logger.error(f"❌ Error storing company directory leads in unified collection: {e}")
+                        company_directory_final_results = {
+                            'extracted_data': company_directory_results,
+                            'unified_storage_error': str(e),
+                            'total_directories_processed': len(urls_company_dir[:3]),
+                            'total_leads_extracted': len(company_directory_results)
+                        }
+                else:
+                    company_directory_final_results = {
+                        'extracted_data': [],
+                        'total_directories_processed': len(urls_company_dir[:3]),
+                        'total_leads_extracted': 0
+                    }
+                
+                results['company_directory'] = company_directory_final_results
+                logger.info(f"✅ Company directory scraper completed: {len(company_directory_results)} leads from {len(urls_company_dir[:3])} directories")
                 
             except Exception as e:
-                logger.error(f"❌ CRL crawler failed: {e}")
-                results['crl_scraper'] = {'error': str(e)}
-                
+                logger.error(f"❌ Company directory scraper failed: {e}")
+                results['company_directory'] = {'error': str(e)}
+        
         # Run Instagram scraper (optimized)
         if 'instagram' in selected_scrapers and classified_urls.get('instagram'):
             logger.info("📸 Running optimized Instagram scraper...")
             try:
                 # Use configured Instagram scraper settings
                 instagram_scraper = OptimizedInstagramScraper(
-                crl_results = crl_scraper.run_complete_pipeline(
-                    icp_identifier=icp_identifier
-                )
-                results['crl'] = crl_results
-                logger.info(f"✅ CRL scraper completed: {crl_results.get('summary', {}).get('successful_leads', 0)} leads")
-                
-            except Exception as e:
-                logger.error(f"❌ CRL scraper failed: {e}")
-                results['crl'] = {'error': str(e)}
-
                     headless=True,
                     enable_anti_detection=True,
                     is_mobile=False,
@@ -1034,6 +1160,85 @@ class LeadGenerationOrchestrator:
             except Exception as e:
                 logger.error(f"❌ YouTube scraper failed: {e}")
                 results['youtube'] = {'error': str(e)}
+        
+        # Run Facebook scraper
+        if 'facebook' in selected_scrapers and classified_urls.get('facebook'):
+            logger.info("📘 Running optimized Facebook scraper...")
+            try:
+                # Use configured Facebook scraper settings
+                facebook_config = FacebookScrapingConfig(
+                    max_workers=3,
+                    batch_size=3,  # Facebook is more restrictive
+                    context_pool_size=3,
+                    rate_limit_delay=3.0,  # Facebook needs more delay
+                    context_reuse_limit=10
+                )
+                
+                facebook_scraper = OptimizedFacebookScraper(
+                    headless=True,
+                    enable_anti_detection=True,
+                    use_mongodb=True,
+                    config=facebook_config,
+                    icp_identifier=icp_identifier
+                )
+                urls_facebook = classified_urls['facebook']
+                random.shuffle(urls_facebook)
+                facebook_urls = urls_facebook[:3]  # Limit to 3 URLs for Facebook (more restrictive)
+                logger.info(f"Processing {len(facebook_urls)} Facebook URLs with optimized scraper...")
+                logger.info(f"Facebook scraper config: {facebook_config.max_workers} workers, batch size {facebook_config.batch_size}, {facebook_config.context_pool_size} contexts")
+                
+                facebook_results = await facebook_scraper.scrape(facebook_urls)
+                
+                # Transform and store Facebook results in unified collection
+                if facebook_results.get('data'):
+                    try:
+                        # Get the Facebook data
+                        leads_data = facebook_results['data']
+                        
+                        # Use unified leads from scraper if provided; otherwise transform here
+                        unified_leads = facebook_results.get('unified_leads') or []
+                        if not unified_leads:
+                            unified_leads = [facebook_scraper._transform_facebook_to_unified(entry, icp_identifier) for entry in leads_data]
+                            unified_leads = [u for u in unified_leads if u]
+                        unified_stats = self.mongodb_manager.insert_batch_unified_leads(unified_leads) if unified_leads else {
+                            'success_count': 0,'duplicate_count':0,'failure_count':0,'total_processed':0
+                        }
+                        
+                        # Update results with unified storage stats
+                        facebook_results['unified_storage'] = unified_stats
+                        logger.info(f"✅ Facebook leads stored in unified collection: {unified_stats['success_count']} leads")
+                        
+                        # Log validation statistics
+                        valid_leads = unified_stats['success_count'] + unified_stats['duplicate_count']
+                        invalid_leads = unified_stats['failure_count']
+                        total_leads = unified_stats['total_processed']
+                        
+                        if total_leads > 0:
+                            validation_rate = (valid_leads / total_leads) * 100
+                            logger.info(f"📊 Facebook validation rate: {validation_rate:.1f}% ({valid_leads}/{total_leads} leads passed validation)")
+                            logger.info(f"   - Valid leads: {valid_leads}")
+                            logger.info(f"   - Invalid leads (skipped): {invalid_leads}")
+                            logger.info(f"   - Duplicates: {unified_stats['duplicate_count']}")
+                        
+                    except Exception as e:
+                        logger.error(f"❌ Error storing Facebook leads in unified collection: {e}")
+                        facebook_results['unified_storage_error'] = str(e)
+                
+                results['facebook'] = facebook_results
+                
+                # Log performance metrics
+                if facebook_results.get('summary', {}).get('performance_metrics'):
+                    metrics = facebook_results['summary']['performance_metrics']
+                    logger.info(f"✅ Facebook scraper completed: {len(facebook_results.get('data', []))} profiles/pages")
+                    logger.info(f"   - Throughput: {metrics.get('throughput_per_second', 0):.2f} URLs/second")
+                    logger.info(f"   - Total time: {facebook_results['summary'].get('total_time_seconds', 0):.2f} seconds")
+                    logger.info(f"   - Success rate: {facebook_results['summary'].get('success_rate', 0):.1f}%")
+                else:
+                    logger.info(f"✅ Facebook scraper completed: {len(facebook_results.get('data', []))} profiles/pages")
+                
+            except Exception as e:
+                logger.error(f"❌ Facebook scraper failed: {e}")
+                results['facebook'] = {'error': str(e)}
 
         return results
     
@@ -1117,6 +1322,23 @@ class LeadGenerationOrchestrator:
                 elif scraper == 'youtube':
                     report_data["results_summary"][scraper] = {
                         "status": "success" if result.get('success') else "failed"
+                    }
+                elif scraper == 'facebook':
+                    summary = result.get('summary', {})
+                    performance_metrics = summary.get('performance_metrics', {})
+                    unified_storage = result.get('unified_storage', {})
+                    report_data["results_summary"][scraper] = {
+                        "status": "success",
+                        "profiles_found": len(result.get('data', [])),
+                        "success_rate": summary.get('success_rate', 0),
+                        "total_time_seconds": summary.get('total_time_seconds', 0),
+                        "throughput_per_second": performance_metrics.get('throughput_per_second', 0),
+                        "max_workers": performance_metrics.get('max_workers', 0),
+                        "batch_size": performance_metrics.get('batch_size', 0),
+                        "contexts_used": performance_metrics.get('contexts_used', 0),
+                        "unified_leads_stored": unified_storage.get('success_count', 0),
+                        "duplicate_leads": unified_storage.get('duplicate_count', 0),
+                        "failed_leads": unified_storage.get('failure_count', 0)
                     }
                 # COMMENTED OUT - crl.py removed from flow
                 # elif scraper == 'web_crawler':
@@ -1222,7 +1444,7 @@ class LeadGenerationOrchestrator:
             
             # Step 5: Run selected scrapers
             logger.info("🚀 Step 5: Running scrapers...")
-            results = await self.run_selected_scrapers(classified_urls, selected_scrapers, icp_identifier)
+            results = await self.run_selected_scrapers(classified_urls, selected_scrapers, icp_identifier, icp_data)
             
             """
             # Step 6: Filter and process leads using MongoDBLeadProcessor

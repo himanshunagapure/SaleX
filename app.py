@@ -124,7 +124,7 @@ def run_lead_generation():
             "product_details": {...},
             "icp_information": {...}
         },
-        "selected_scrapers": ["web_scraper", "instagram", "linkedin", "youtube"]
+        "selected_scrapers": ["web_scraper", "company_directory", "instagram", "linkedin", "youtube", "facebook"]
     }
     """
     try:
@@ -238,7 +238,7 @@ async def run_pipeline_async(orch, icp_data, selected_scrapers, icp_identifier, 
         
         # Step 4: Run selected scrapers
         logger.info("🚀 Step 4: Running scrapers...")
-        scraper_results = await orch.run_selected_scrapers(classified_urls, selected_scrapers, icp_data, icp_identifier)
+        scraper_results = await orch.run_selected_scrapers(classified_urls, selected_scrapers, icp_identifier, icp_data)
         
         # Add web crawler results to scraper results
         # COMMENTED OUT - crl.py removed from flow
@@ -415,6 +415,18 @@ async def run_pipeline_async(orch, icp_data, selected_scrapers, icp_identifier, 
                     response_data["scraper_results_summary"][scraper] = {
                         "status": "success" if result.get('success') else "failed"
                     }
+                elif scraper == 'facebook':
+                    summary = result.get('summary', {})
+                    performance_metrics = summary.get('performance_metrics', {})
+                    unified_storage = result.get('unified_storage', {})
+                    response_data["scraper_results_summary"][scraper] = {
+                        "status": "success",
+                        "profiles_found": len(result.get('data', [])),
+                        "success_rate": summary.get('success_rate', 0),
+                        "total_time_seconds": summary.get('total_time_seconds', 0),
+                        "throughput_per_second": performance_metrics.get('throughput_per_second', 0),
+                        "unified_leads_stored": unified_storage.get('success_count', 0)
+                    }
         
         # Count successful scrapers (excluding lead_filtering and contact_enhancement)
         actual_successful_scrapers = len([r for r in scraper_results.items() 
@@ -496,10 +508,17 @@ async def run_direct_pipeline_async(orch, scraper_selections, icp_identifier='de
         # Step 4: Run selected scrapers
         logger.info("🚀 Step 4: Running scrapers...")
         selected_scrapers = list(scraper_selections.keys())
-        # Use the provided ICP identifier or generate a default one
+        
+        # Get ICP data for the scrapers
         if icp_identifier == 'default':
-            icp_identifier = orch.generate_icp_identifier(orch.get_hardcoded_icp())
-        scraper_results = await orch.run_selected_scrapers(classified_urls, selected_scrapers, icp_identifier)
+            icp_data = orch.get_hardcoded_icp()
+            icp_identifier = orch.generate_icp_identifier(icp_data)
+        else:
+            # If a specific ICP identifier is provided, we need to get the ICP data
+            # For now, use hardcoded ICP as fallback
+            icp_data = orch.get_hardcoded_icp()
+        
+        scraper_results = await orch.run_selected_scrapers(classified_urls, selected_scrapers, icp_identifier, icp_data)
         
         """
         # Step 5: Filter and process leads using MongoDBLeadProcessor
@@ -676,6 +695,18 @@ async def run_direct_pipeline_async(orch, scraper_selections, icp_identifier='de
                     response_data["scraper_results_summary"][scraper] = {
                         "status": "success" if result.get('success') else "failed"
                     }
+                elif scraper == 'facebook':
+                    summary = result.get('summary', {})
+                    performance_metrics = summary.get('performance_metrics', {})
+                    unified_storage = result.get('unified_storage', {})
+                    response_data["scraper_results_summary"][scraper] = {
+                        "status": "success",
+                        "profiles_found": len(result.get('data', [])),
+                        "success_rate": summary.get('success_rate', 0),
+                        "total_time_seconds": summary.get('total_time_seconds', 0),
+                        "throughput_per_second": performance_metrics.get('throughput_per_second', 0),
+                        "unified_leads_stored": unified_storage.get('success_count', 0)
+                    }
         
         # Count successful scrapers (excluding lead_filtering and contact_enhancement)
         actual_successful_scrapers = len([r for r in scraper_results.items() 
@@ -748,7 +779,7 @@ def generate_queries_only():
 def run_single_scraper(scraper_name):
     """
     Run lead generation pipeline for a single scraper.
-    Supported scraper_name values: instagram, linkedin, web_scraper, youtube
+    Supported scraper_name values: instagram, linkedin, web_scraper, youtube, facebook, company_directory
     
     Expected payload:
     {
@@ -1067,7 +1098,8 @@ def run_direct_lead_generation():
             "web_scraper": 10,
             "instagram": 5,
             "linkedin": 6,
-            "youtube": 5
+            "youtube": 5,
+            "facebook": 5
         },
         "icp_identifier": "premium-bus-travel_20241201_1430_a1b2c3d4"  # Optional, defaults to "default"
     }
@@ -1147,7 +1179,7 @@ def not_found(error):
             "GET /api/urls/available - Get available unprocessed URLs count",
             "GET /api/leads/by-icp/<icp_identifier> - Get leads by ICP identifier",
             "GET /api/leads/icp-stats/<icp_identifier> - Get ICP statistics",
-            "POST /api/scraper/<scraper_name>/run - Run single scraper pipeline (instagram|linkedin|web_scraper|youtube)",
+            "POST /api/scraper/<scraper_name>/run - Run single scraper pipeline (instagram|linkedin|web_scraper|youtube|facebook|company_directory)",
             "GET /api/status - Get system status"
         ]
     }), 404
