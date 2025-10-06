@@ -6,8 +6,8 @@ import asyncio
 import argparse
 import sys
 import os
-from typing import List, Optional
-from typing import Dict, Any, Optional
+from typing import Dict, List,Any, Optional
+import time
 
 # Add parent directory to path to import database module
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -73,19 +73,31 @@ class YouTubeScraperInterface:
             if self.extractor:
                 await self.extractor.stop()
     
-    async def scrape_multiple_urls(self, urls: List[str], output_file: str = "youtube_batch_data.json") -> bool:
+    async def scrape_multiple_urls(self, urls: List[str], output_file: str = "youtube_batch_data.json", icp_identifier: str = "default") -> dict:
         """
         Scrape multiple YouTube URLs and save to file
         
         Args:
             urls: List of YouTube URLs to scrape
             output_file: Output file name
+            icp_identifier: ICP identifier for unified leads
             
         Returns:
-            bool: Success status
+            dict: Structured results with data, unified_leads, and metadata
         """
         print(f"🎯 Scraping {len(urls)} URLs...")
-        
+        results = {
+            'data': [],
+            'unified_leads': [],
+            'summary': {
+                'total_urls': len(urls),
+                'successful_scrapes': 0,
+                'failed_scrapes': 0,
+                'total_time_seconds': 0
+            },
+            'error': None
+        }
+        start_time = time.time()
         try:
             self.extractor = AdvancedYouTubeExtractor(
                 headless=self.headless, 
@@ -101,34 +113,53 @@ class YouTubeScraperInterface:
                     data = await self.extractor.extract_youtube_data(url)
                     if not data.get('error'):
                         all_data.append(data)
+                        results['summary']['successful_scrapes'] += 1
+                    else:
+                        results['summary']['failed_scrapes'] += 1
+                        print(f"⚠️ Skipped {url} due to error: {data.get('error')}")
                 except Exception as e:
+                    results['summary']['failed_scrapes'] += 1
                     print(f"❌ Error extracting data from {url}: {e}")
             
             # Save to file as backup
-            final_output = await self.extractor.save_clean_final_output(all_data, output_file)
-            
+            if all_data:
+                final_output = await self.extractor.save_clean_final_output(all_data, output_file)
+                results['data'] = final_output
+            else:
+                results['data'] = []
+
             # Prepare unified leads for orchestrator-level persistence
             if final_output:
                 unified_batch = []
                 for item in final_output:
-                    u = self._transform_youtube_to_unified(item)
-                    if u:
-                        unified_batch.append(u)
+                    try:
+                        u = self._transform_youtube_to_unified(item, icp_identifier)
+                        if u:
+                            unified_batch.append(u)
+                    except Exception as e:
+                        print(f"❌ Error transforming YouTube data to unified: {e}")
                 # Attach as metadata in return path by updating output file content already contains data
             
+            results['unified_leads'] = unified_batch
+            results['summary']['total_time_seconds'] = time.time() - start_time
 
+            print(f"✅ Successfully scraped {results['summary']['successful_scrapes']} URLs")
+            print(f"   - Generated {len(unified_batch)} unified leads")
             
-            print(f"✅ Successfully scraped {len(all_data)} URLs and saved to {output_file}")
-            return True
+            return results
             
         except Exception as e:
-            print(f"❌ Error scraping URLs: {e}")
-            return False
+            error_msg = f"Error scraping URLs: {e}"
+            print(f"❌ {error_msg}")
+            results['error'] = error_msg
+            results['summary']['total_time_seconds'] = time.time() - start_time
+            return results
+        
         finally:
             if self.extractor:
                 await self.extractor.stop()
 
-    def _transform_youtube_to_unified(self, youtube_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def _transform_youtube_to_unified(self, youtube_data: Dict[str, Any], icp_identifier: str) -> Optional[Dict[str, Any]]:
         """Transform YouTube data to unified schema (local to scraper). Only profile-type saved."""
         try:
             content_type = (youtube_data.get('content_type') or '').lower()
@@ -151,8 +182,8 @@ class YouTubeScraperInterface:
                 "url": youtube_data.get('url', ""),
                 "platform": "youtube",
                 "content_type": "profile",
+                'icp_identifier': icp_identifier,
                 "source": "youtube-scraper",
-                "icp_identifier": 'default',
                 "profile": {
                     "username": "",
                     "full_name": youtube_data.get('channel_name', ""),

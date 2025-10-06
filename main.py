@@ -37,7 +37,7 @@ from facebook_scraper.main_optimized import OptimizedFacebookScraper, FacebookSc
 from database.mongodb_manager import get_mongodb_manager
 from filter_web_lead import MongoDBLeadProcessor
 from contact_scraper import run_optimized_contact_scraper
-# from web.crl import run_web_crawler_async, get_mongodb_manager  # Commented out - crl.py removed from flow
+from web.crl import run_web_crawler_async, get_mongodb_manager  # Commented out - crl.py removed from flow
 
 # Scraper registry centralization
 from scraper_registry import (
@@ -862,22 +862,22 @@ class LeadGenerationOrchestrator:
                 logger.error(f"❌ Web scraper failed: {e}")
                 results['web_scraper'] = {'error': str(e)}
 
-        # # Run crl.py crawler (Google-search-driven lead extraction)
-        # #if 'crl_scraper' in selected_scrapers:
-        # logger.info("🔍 Running CRL web crawler...")
-        # try:
-        #     if not icp_data:
-        #         raise ValueError("ICP data not provided for CRL scraper")
-        #     
-        #     crl_results = await run_web_crawler_async(icp_data, icp_identifier=icp_identifier)
-        #     
-        #     # Store summary in results
-        #     results['crl_scraper'] = crl_results
-        #     logger.info(f"✅ CRL crawler completed: {crl_results['summary']['total_leads_found']} leads found")
-        #     
-        # except Exception as e:
-        #     logger.error(f"❌ CRL crawler failed: {e}")
-        #     results['crl_scraper'] = {'error': str(e)}
+        # Run crl.py crawler (Google-search-driven lead extraction)
+    # if 'crl_scraper' in selected_scrapers:
+        logger.info("🔍 Running CRL web crawler...")
+        try:
+            if not icp_data:
+                raise ValueError("ICP data not provided for CRL scraper")
+            
+            crl_results = await run_web_crawler_async(icp_data, icp_identifier=icp_identifier)
+            
+            # Store summary in results
+            results['crl_scraper'] = crl_results
+            logger.info(f"✅ CRL crawler completed: {crl_results['summary']['total_leads_found']} leads found")
+            
+        except Exception as e:
+            logger.error(f"❌ CRL crawler failed: {e}")
+            results['crl_scraper'] = {'error': str(e)}
 
         
         # # Run company_directory scraper (advanced business directory scraping) - COMMENTED OUT
@@ -1154,14 +1154,60 @@ class LeadGenerationOrchestrator:
                     enable_anti_detection=True,
                     use_mongodb=True
                 )
-                
-                youtube_success = await youtube_scraper.scrape_multiple_urls(
-                    classified_urls['youtube'][:5], # Limit to 5 URLs
-                    "youtube_orchestrator_results.json"
+                youtube_urls = classified_urls['youtube'][:5]  # Limit to 5 URLs
+                random.shuffle(youtube_urls)
+                logger.info(f"Processing {len(youtube_urls)} YouTube URLs...")
+
+                youtube_results = await youtube_scraper.scrape_multiple_urls(
+                    youtube_urls, 
+                    "youtube_orchestrator_results.json",
+                    icp_identifier
                 )
-                results['youtube'] = {'success': youtube_success}
-                logger.info(f"✅ YouTube scraper completed: {'Success' if youtube_success else 'Failed'}")
+                # Transform and store YouTube results in unified collection
+                if youtube_results.get('data'):
+                    try:
+                        # Use unified leads from scraper if provided; otherwise transform here
+                        unified_leads = youtube_results.get('unified_leads') or []
+                        if not unified_leads:
+                            leads_data = youtube_results['data']
+                            unified_leads = [youtube_scraper._transform_youtube_to_unified(item, icp_identifier) for item in leads_data]
+                            unified_leads = [u for u in unified_leads if u]
+                        
+                        unified_stats = self.mongodb_manager.insert_batch_unified_leads(unified_leads) if unified_leads else {
+                            'success_count': 0, 'duplicate_count': 0, 'failure_count': 0, 'total_processed': 0
+                        }
+                        
+                        # Update results with unified storage stats
+                        youtube_results['unified_storage'] = unified_stats
+                        logger.info(f"✅ YouTube leads stored in unified collection: {unified_stats['success_count']} leads")
+                        
+                        # Log validation statistics
+                        valid_leads = unified_stats['success_count'] + unified_stats['duplicate_count']
+                        invalid_leads = unified_stats['failure_count']
+                        total_leads = unified_stats['total_processed']
+                        
+                        if total_leads > 0:
+                            validation_rate = (valid_leads / total_leads) * 100
+                            logger.info(f"📊 YouTube validation rate: {validation_rate:.1f}% ({valid_leads}/{total_leads} leads passed validation)")
+                            logger.info(f"   - Valid leads: {valid_leads}")
+                            logger.info(f"   - Invalid leads (skipped): {invalid_leads}")
+                            logger.info(f"   - Duplicates: {unified_stats['duplicate_count']}")
+                        
+                    except Exception as e:
+                        logger.error(f"❌ Error storing YouTube leads in unified collection: {e}")
+                        youtube_results['unified_storage_error'] = str(e)
                 
+                results['youtube'] = youtube_results
+                
+                # Log performance metrics
+                summary = youtube_results.get('summary', {})
+                logger.info(f"✅ YouTube scraper completed: {summary.get('successful_scrapes', 0)} channels/videos")
+                logger.info(f"   - Total URLs processed: {summary.get('total_urls', 0)}")
+                logger.info(f"   - Failed scrapes: {summary.get('failed_scrapes', 0)}")
+                logger.info(f"   - Total time: {summary.get('total_time_seconds', 0):.2f} seconds")
+                if summary.get('total_urls', 0) > 0:
+                    success_rate = (summary.get('successful_scrapes', 0) / summary.get('total_urls', 1)) * 100
+                    logger.info(f"   - Success rate: {success_rate:.1f}%")
             except Exception as e:
                 logger.error(f"❌ YouTube scraper failed: {e}")
                 results['youtube'] = {'error': str(e)}
@@ -1325,8 +1371,20 @@ class LeadGenerationOrchestrator:
                         "failed_scrapes": metadata.get('failed_scrapes', 0)
                     }
                 elif scraper == 'youtube':
+                    summary = result.get('summary', {})
+                    unified_storage = result.get('unified_storage', {})
                     report_data["results_summary"][scraper] = {
-                        "status": "success" if result.get('success') else "failed"
+                        "status": "success" if not result.get('error') else "failed",
+                        "channels_videos_found": len(result.get('data', [])),
+                        "successful_scrapes": summary.get('successful_scrapes', 0),
+                        "failed_scrapes": summary.get('failed_scrapes', 0),
+                        "total_urls_processed": summary.get('total_urls', 0),
+                        "success_rate": (summary.get('successful_scrapes', 0) / summary.get('total_urls', 1)) * 100 if summary.get('total_urls', 0) > 0 else 0,
+                        "total_time_seconds": summary.get('total_time_seconds', 0),
+                        "unified_leads_stored": unified_storage.get('success_count', 0),
+                        "duplicate_leads": unified_storage.get('duplicate_count', 0),
+                        "failed_leads": unified_storage.get('failure_count', 0),
+                        "validation_rate": ((unified_storage.get('success_count', 0) + unified_storage.get('duplicate_count', 0)) / unified_storage.get('total_processed', 1)) * 100 if unified_storage.get('total_processed', 0) > 0 else 0
                     }
                 elif scraper == 'facebook':
                     summary = result.get('summary', {})

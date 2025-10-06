@@ -331,7 +331,7 @@ class OptimizedFacebookScraper:
                     },
                     "contact": {
                         "emails": extracted_data.get('emails', []),
-                        "phone_numbers": extracted_data.get('phone_numbers', []),
+                        "phone_numbers": "",
                         "address": "",
                         "websites": [extracted_data.get('og_url')] if extracted_data.get('og_url') else [],
                         "social_media_handles": {
@@ -366,7 +366,7 @@ class OptimizedFacebookScraper:
                     },
                     "contact": {
                         "emails": extracted_data.get('emails', []),
-                        "phone_numbers": extracted_data.get('phone_numbers', []),
+                        "phone_numbers": "",
                         "address": extracted_data.get('address', ''),
                         "websites": [extracted_data.get('website')] if extracted_data.get('website') else [],
                         "social_media_handles": {
@@ -401,7 +401,7 @@ class OptimizedFacebookScraper:
                     },
                     "contact": {
                         "emails": extracted_data.get('emails', []),
-                        "phone_numbers": extracted_data.get('phone_numbers', []),
+                        "phone_numbers": "",
                         "address": extracted_data.get('address', ''),
                         "websites": [extracted_data.get('website')] if extracted_data.get('website') else [],
                         "social_media_handles": {
@@ -436,7 +436,7 @@ class OptimizedFacebookScraper:
                     },
                     "contact": {
                         "emails": extracted_data.get('emails', []),
-                        "phone_numbers": extracted_data.get('phone_numbers', []),
+                        "phone_numbers": "",
                         "address": "",
                         "websites": [],
                         "social_media_handles": {
@@ -471,7 +471,7 @@ class OptimizedFacebookScraper:
                     },
                     "contact": {
                         "emails": extracted_data.get('emails', []),
-                        "phone_numbers": extracted_data.get('phone_numbers', []),
+                        "phone_numbers": "",
                         "address": extracted_data.get('address', ''),
                         "websites": [],
                         "social_media_handles": {
